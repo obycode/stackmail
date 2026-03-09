@@ -19,6 +19,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/packages/crypto/dist ./packages/crypto/dist
 COPY --from=build /app/packages/crypto/package.json ./packages/crypto/
 COPY --from=build /app/packages/server/dist ./packages/server/dist
+COPY --from=build /app/packages/server/web ./packages/server/web
 COPY --from=build /app/packages/server/package.json ./packages/server/
 COPY --from=build /app/packages/client/dist ./packages/client/dist
 COPY --from=build /app/packages/client/package.json ./packages/client/
