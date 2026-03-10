@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stackmail</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d1117;
+      --surface:   #161b22;
+      --surface2:  #1c2128;
+      --border:    #30363d;
+      --border2:   #21262d;
+      --text:      #e6edf3;
+      --muted:     #8b949e;
+      --accent:    #5546FF;
+      --accent-dim:#3b30cc;
+      --green:     #3fb950;
+      --red:       #f85149;
+      --yellow:    #d29922;
+      --radius:    8px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* ── Layout ──────────────────────────────────────────────────────── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      height: 56px;
+    }
+
+    .logo {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+    }
+
+    .logo-icon {
+      width: 28px;
+      height: 28px;
+      background: var(--accent);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+    }
+
+    nav { display: flex; gap: 4px; }
+
+    .tab-btn {
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 6px 14px;
+      border-radius: var(--radius);
+      font-size: 14px;
+      font-family: inherit;
+      transition: color 0.15s, background 0.15s;
+    }
+    .tab-btn:hover { color: var(--text); background: var(--surface2); }
+    .tab-btn.active { color: var(--text); background: var(--surface2); font-weight: 600; }
+
+    main { max-width: 860px; margin: 0 auto; padding: 24px; }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── Cards ──────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+
+    .card-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 10px;
+    }
+
+    .card-value {
+      font-size: 15px;
+      color: var(--text);
+      word-break: break-all;
+    }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 600px) { .grid-2 { grid-template-columns: 1fr; } }
+
+    /* ── Status dot ─────────────────────────────────────────────────── */
+    .dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+      display: inline-block;
+    }
+    .dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .dot.red   { background: var(--red);   box-shadow: 0 0 6px var(--red); }
+
+    /* ── Buttons ─────────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+      border-radius: var(--radius);
+      border: none;
+      cursor: pointer;
+      font-size: 13px;
+      font-family: inherit;
+      font-weight: 500;
+      transition: opacity 0.15s, background 0.15s;
+    }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-dim); }
+    .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+    .btn-secondary:hover:not(:disabled) { background: var(--border2); }
+    .btn-lg { padding: 12px 24px; font-size: 15px; font-weight: 600; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    .btn-danger { background: #3d1a1a; color: var(--red); border: 1px solid #5c2222; }
+    .btn-danger:hover:not(:disabled) { background: #4d2020; }
+
+    /* ── Forms ──────────────────────────────────────────────────────── */
+    .form-group { margin-bottom: 16px; }
+    label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; font-weight: 500; }
+
+    input[type=text], textarea {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 14px;
+      padding: 8px 12px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type=text]:focus, textarea:focus { border-color: var(--accent); }
+    textarea { resize: vertical; min-height: 100px; }
+
+    /* ── Mono / address ─────────────────────────────────────────────── */
+    .mono {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .addr-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      color: var(--muted);
+      word-break: break-all;
+      flex-wrap: wrap;
+    }
+
+    /* ── Badges ─────────────────────────────────────────────────────── */
+    .badge {
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-green  { background: #1a3d2b; color: var(--green); }
+    .badge-purple { background: #1d1847; color: #a08cff; }
+    .badge-yellow { background: #332900; color: var(--yellow); }
+    .badge-muted  { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+
+    /* ── Message items ──────────────────────────────────────────────── */
+    .msg-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      margin-bottom: 10px;
+    }
+
+    .msg-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .msg-from {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .msg-meta {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .msg-amount { font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+    /* ── Spinner ─────────────────────────────────────────────────────── */
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    .spinner-lg {
+      display: block;
+      width: 40px; height: 40px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      margin: 0 auto 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Alerts ─────────────────────────────────────────────────────── */
+    .alert {
+      padding: 12px 16px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+    .alert:last-child { margin-bottom: 0; }
+    .alert-info    { background: #0d1f3c; border: 1px solid #1a3a6e; color: #58a6ff; }
+    .alert-success { background: #0d2b1d; border: 1px solid #1a4a33; color: var(--green); }
+    .alert-error   { background: #2d0f0f; border: 1px solid #5c2222; color: var(--red); }
+    .alert-warning { background: #2b2000; border: 1px solid #4a3800; color: var(--yellow); }
+
+    /* ── Empty state ─────────────────────────────────────────────────── */
+    .empty-state {
+      text-align: center;
+      padding: 48px 24px;
+      color: var(--muted);
+    }
+    .empty-state-icon { font-size: 40px; margin-bottom: 12px; }
+    .empty-state h3 { font-size: 16px; color: var(--text); margin-bottom: 8px; }
+
+    /* ── Full-page panels ────────────────────────────────────────────── */
+    .full-panel {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 60vh;
+      text-align: center;
+    }
+
+    .welcome-icon {
+      width: 64px; height: 64px;
+      background: var(--accent);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+      margin: 0 auto 24px;
+    }
+
+    .welcome-title {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .welcome-sub {
+      color: var(--muted);
+      margin-bottom: 28px;
+      max-width: 420px;
+      line-height: 1.6;
+    }
+
+    /* ── Info panel (compose) ───────────────────────────────────────── */
+    .info-panel {
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      margin-top: 12px;
+    }
+    .info-panel-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      padding: 3px 0;
+    }
+    .info-panel-label { color: var(--muted); }
+    .info-panel-value { color: var(--text); font-family: 'SF Mono', 'Fira Code', monospace; }
+
+    /* ── Misc ────────────────────────────────────────────────────────── */
+    .divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+    .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .spacer { flex: 1; }
+
+    /* ── Wallet chip in header ───────────────────────────────────────── */
+    #wallet-chip {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      font-size: 12px;
+      font-family: monospace;
+    }
+
+    /* ── Onboarding ──────────────────────────────────────────────────── */
+    .onboarding-steps {
+      list-style: none;
+      text-align: left;
+      margin: 20px 0;
+    }
+    .onboarding-steps li {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 10px 0;
+      border-top: 1px solid var(--border2);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .onboarding-steps li:first-child { border-top: none; }
+    .step-num {
+      width: 24px; height: 24px;
+      border-radius: 50%;
+      background: var(--surface2);
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .step-done .step-num {
+      background: var(--green);
+      border-color: var(--green);
+      color: var(--bg);
+    }
+
+    /* ── Status row ──────────────────────────────────────────────────── */
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .status-label { font-size: 18px; font-weight: 600; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">✉</div>
+    Stackmail
+  </div>
+  <nav id="main-nav" style="display:none">
+    <button class="tab-btn active" data-tab="inbox">Inbox</button>
+    <button class="tab-btn" data-tab="compose">Compose</button>
+    <button class="tab-btn" data-tab="status">Status</button>
+  </nav>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+    <button class="btn btn-secondary btn-sm" id="connect-wallet-btn">Connect Wallet</button>
+    <div id="wallet-chip">
+      <span style="width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;flex-shrink:0;"></span>
+      <span id="wallet-addr-chip">—</span>
+      <button id="disconnect-btn" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:14px;padding:0 0 0 4px;line-height:1;">&times;</button>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <!-- ── no-wallet ──────────────────────────────────────────────────── -->
+  <div id="panel-no-wallet" class="full-panel">
+    <div class="welcome-icon">✉</div>
+    <div class="welcome-title">Welcome to Stackmail</div>
+    <div class="welcome-sub">
+      Encrypted, pay-to-send messaging on Bitcoin via Stacks.
+      Connect your Leather or Xverse wallet to get started.
+    </div>
+    <button class="btn btn-primary btn-lg" id="connect-wallet-main">Connect Wallet</button>
+    <div id="wallet-error" style="margin-top:16px;max-width:380px"></div>
+    <div style="margin-top:32px;color:var(--muted);font-size:12px;max-width:400px">
+      No wallet?
+      <a href="https://leather.io" target="_blank" rel="noopener" style="color:var(--accent)">Get Leather</a>
+      or
+      <a href="https://xverse.app" target="_blank" rel="noopener" style="color:var(--accent)">Get Xverse</a>
+    </div>
+  </div>
+
+  <!-- ── checking ───────────────────────────────────────────────────── -->
+  <div id="panel-checking" class="full-panel" style="display:none">
+    <div class="spinner-lg"></div>
+    <div style="color:var(--muted)" id="checking-label">Checking your account…</div>
+  </div>
+
+  <!-- ── no-tap (onboarding) ────────────────────────────────────────── -->
+  <div id="panel-onboarding" style="display:none">
+    <div class="card" style="max-width:600px;margin:0 auto 24px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+        <span style="font-size:28px">📬</span>
+        <div>
+          <div style="font-size:17px;font-weight:700">Open Your Mailbox</div>
+          <div style="color:var(--muted);font-size:13px">One-time setup to send &amp; receive messages</div>
+        </div>
+      </div>
+
+      <div class="alert alert-info" style="margin-bottom:20px">
+        Once open, others can send you encrypted messages and you can send messages to anyone on Stacks.
+      </div>
+
+      <ul class="onboarding-steps">
+        <li class="step-done">
+          <span class="step-num">✓</span>
+          <div>
+            <strong style="color:var(--text)">Wallet connected</strong><br>
+            <span class="mono" id="onboarding-addr" style="font-size:11px"></span>
+          </div>
+        </li>
+        <li>
+          <span class="step-num">2</span>
+          <div>
+            <strong style="color:var(--text)">Open a payment channel</strong><br>
+            This creates a StackFlow pipe between your wallet and the server, setting you up to send and receive Stackmail messages.
+            Think of it as opening your mailbox and buying stamps at the same time.
+          </div>
+        </li>
+      </ul>
+
+      <div id="open-mailbox-error" style="margin-bottom:12px"></div>
+
+      <button class="btn btn-primary" id="open-mailbox-btn" style="width:100%;justify-content:center;padding:11px">
+        Open Mailbox
+      </button>
+      <div style="margin-top:10px;font-size:12px;color:var(--muted);text-align:center">
+        This will submit an on-chain transaction — gas fees apply.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── tx-pending ─────────────────────────────────────────────────── -->
+  <div id="panel-tx-pending" class="full-panel" style="display:none">
+    <div style="font-size:32px;margin-bottom:16px">🚀</div>
+    <div style="font-size:18px;font-weight:700;margin-bottom:8px">Transaction Submitted</div>
+    <div style="color:var(--muted);margin-bottom:20px;text-align:center">
+      Your mailbox is being opened. This usually confirms within a minute.
+    </div>
+    <div style="margin-bottom:20px">
+      <a id="tx-explorer-link" href="#" target="_blank" rel="noopener"
+         style="color:var(--accent);font-family:monospace;font-size:13px" id="tx-id-display">
+        View on Explorer
+      </a>
+    </div>
+    <div id="tx-status-msg" style="margin-bottom:16px;max-width:380px"></div>
+    <button class="btn btn-primary" id="check-tap-btn">Check Status</button>
+  </div>
+
+  <!-- ── main app ───────────────────────────────────────────────────── -->
+  <div id="panel-main" style="display:none">
+
+    <!-- Inbox tab -->
+    <div class="tab-panel active" id="tab-inbox">
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-title">Your Inbox Address</div>
+        <div class="addr-row">
+          <span class="mono" id="inbox-addr">—</span>
+          <button class="btn btn-secondary btn-sm" id="copy-inbox-addr-btn">Copy</button>
+        </div>
+        <div style="margin-top:6px;font-size:12px;color:var(--muted)">
+          Share this address so others can send you messages.
+        </div>
+      </div>
+
+      <div class="row" style="margin-bottom:16px">
+        <button class="btn btn-secondary" id="refresh-inbox-btn">⟳ Refresh</button>
+        <label style="margin:0;display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+          <input type="checkbox" id="show-claimed-cb" /> Show claimed
+        </label>
+        <div class="spacer"></div>
+        <div id="inbox-count" style="font-size:12px;color:var(--muted)"></div>
+      </div>
+
+      <div id="inbox-status"></div>
+      <div id="inbox-list"></div>
+    </div>
+
+    <!-- Compose tab -->
+    <div class="tab-panel" id="tab-compose">
+      <div class="card">
+        <div class="form-group">
+          <label for="to-input">To (STX address)</label>
+          <input type="text" id="to-input" placeholder="SP…" spellcheck="false" autocomplete="off" />
+          <div id="recipient-status" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="subject-input">Subject <span style="color:var(--muted)">(optional, encrypted)</span></label>
+          <input type="text" id="subject-input" placeholder="Hello from Stackmail" />
+        </div>
+
+        <div class="form-group">
+          <label for="body-input">Message <span style="color:var(--muted)">(encrypted end-to-end)</span></label>
+          <textarea id="body-input" placeholder="Write your message here…"></textarea>
+        </div>
+
+        <div id="payment-panel" style="display:none">
+          <div class="info-panel">
+            <div class="info-panel-row">
+              <span class="info-panel-label">Message price</span>
+              <span class="info-panel-value" id="pay-price">—</span>
+            </div>
+            <div class="info-panel-row">
+              <span class="info-panel-label">Your channel balance</span>
+              <span class="info-panel-value" id="pay-balance">—</span>
+            </div>
+            <div class="info-panel-row">
+              <span class="info-panel-label">Nonce</span>
+              <span class="info-panel-value" id="pay-nonce">—</span>
+            </div>
+          </div>
+          <div id="tap-status" style="margin-top:8px;font-size:12px"></div>
+        </div>
+
+        <div id="send-status" style="margin-top:12px"></div>
+
+        <div style="margin-top:16px">
+          <button class="btn btn-primary" id="send-btn" disabled>Send Message</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status tab -->
+    <div class="tab-panel" id="tab-status">
+      <div class="status-row">
+        <div class="dot" id="health-dot"></div>
+        <span class="status-label" id="health-label">Checking server…</span>
+      </div>
+
+      <div class="grid-2" id="status-cards">
+        <div class="card">
+          <div class="card-title">Server Address</div>
+          <div class="card-value mono" id="s-addr">—</div>
+        </div>
+        <div class="card">
+          <div class="card-title">SF Contract</div>
+          <div class="card-value mono" id="s-contract">—</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Message Price</div>
+          <div class="card-value" id="s-price">—</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Network</div>
+          <div class="card-value" id="s-network">—</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Your Identity</div>
+        <div style="margin-bottom:8px">
+          <span class="badge badge-green">● Wallet Connected</span>
+        </div>
+        <div class="addr-row" style="margin-bottom:6px">
+          <span id="status-wallet-addr">—</span>
+          <button class="btn btn-secondary btn-sm" id="copy-status-addr-btn">Copy</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted)">
+          Pubkey: <span class="mono" id="status-wallet-pubkey">—</span>
+        </div>
+        <hr class="divider">
+        <div class="card-title">Channel Status</div>
+        <div id="status-tap-info" style="font-size:13px;color:var(--muted)">Loading…</div>
+      </div>
+    </div>
+
+  </div><!-- /panel-main -->
+
+</main>
+
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

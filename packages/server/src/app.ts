@@ -9,7 +9,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 
 import type { Config } from './types.js';
 import type { MessageStore } from './store.js';
@@ -38,6 +38,7 @@ export function createMailServer(
   const sfContractId = config.sfContractId;
   const __filename = fileURLToPath(import.meta.url);
   const WEB_DIR = join(dirname(__filename), '..', 'web');
+  const WEB_DIR_RESOLVED = resolve(WEB_DIR);
 
   // ─── Handlers ──────────────────────────────────────────────────────────────
 
@@ -263,12 +264,24 @@ export function createMailServer(
       });
     }
 
-    // Serve web UI
-    if (method === 'GET' && (path === '/' || path === '/ui')) {
+    // Serve web UI (index.html + Vite-built assets)
+    if (method === 'GET' && (path === '/' || path === '/ui' || path.startsWith('/assets/'))) {
       try {
-        const html = await readFile(join(WEB_DIR, 'index.html'), 'utf-8');
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': Buffer.byteLength(html) });
-        res.end(html);
+        const filePath = path === '/' || path === '/ui'
+          ? join(WEB_DIR, 'index.html')
+          : join(WEB_DIR, path.slice(1)); // strip leading /
+        const resolvedPath = resolve(filePath);
+        if (!resolvedPath.startsWith(WEB_DIR_RESOLVED + '/') && resolvedPath !== WEB_DIR_RESOLVED) {
+          return json(res, 403, { error: 'forbidden' });
+        }
+        const data = await readFile(filePath);
+        const ct = filePath.endsWith('.html') ? 'text/html; charset=utf-8'
+                 : filePath.endsWith('.js') || filePath.endsWith('.mjs') ? 'application/javascript'
+                 : filePath.endsWith('.css') ? 'text/css'
+                 : filePath.endsWith('.svg') ? 'image/svg+xml'
+                 : 'application/octet-stream';
+        res.writeHead(200, { 'content-type': ct, 'content-length': data.length });
+        res.end(data);
       } catch {
         res.writeHead(503, { 'content-type': 'text/plain' });
         res.end('Web UI not available');

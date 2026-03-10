@@ -4,14 +4,17 @@ COPY package.json ./
 COPY packages/crypto/package.json ./packages/crypto/
 COPY packages/server/package.json ./packages/server/
 COPY packages/client/package.json ./packages/client/
+COPY packages/web/package.json ./packages/web/
 RUN npm install --workspaces
 COPY tsconfig.json ./
 COPY packages/crypto ./packages/crypto
 COPY packages/server ./packages/server
 COPY packages/client ./packages/client
+COPY packages/web ./packages/web
 RUN npm run build --workspace=packages/crypto
 RUN npm run build --workspace=packages/server
 RUN npm run build --workspace=packages/client
+RUN npm run build --workspace=packages/web
 
 FROM node:20-slim AS runtime
 WORKDIR /app
