@@ -954,8 +954,9 @@ async function connectWallet() {
     updateWalletUI();
     await onWalletConnected();
   } catch (e) {
+    const msg = typeof e === 'string' ? e : (e?.message || e?.reason || JSON.stringify(e) || 'Unknown error');
     document.getElementById('wallet-error').innerHTML =
-      `<div class="alert alert-error">Connection failed: ${escHtml(e.message)}</div>`;
+      `<div class="alert alert-error">Connection failed: ${escHtml(msg)}</div>`;
     btns.forEach(b => { b.disabled = false; b.textContent = 'Connect Wallet'; });
   }
 }
@@ -1206,7 +1207,8 @@ async function openMailbox() {
     setAppState('tx-pending');
 
   } catch (e) {
-    errorEl.innerHTML = `<div class="alert alert-error">${escHtml(e.message)}</div>`;
+    const msg = typeof e === 'string' ? e : (e?.message || e?.reason || JSON.stringify(e) || 'Unknown error');
+    errorEl.innerHTML = `<div class="alert alert-error">${escHtml(msg)}</div>`;
     btn.disabled = false;
     btn.innerHTML = 'Open Mailbox';
   }
@@ -1267,7 +1269,8 @@ async function loadInbox() {
     statusEl.innerHTML = '';
     renderInboxMessages(data.messages || []);
   } catch (e) {
-    statusEl.innerHTML = `<div class="alert alert-error">Failed to load inbox: ${escHtml(e.message)}</div>`;
+    const msg = typeof e === 'string' ? e : (e?.message || e?.reason || JSON.stringify(e) || 'Unknown error');
+    statusEl.innerHTML = `<div class="alert alert-error">Failed to load inbox: ${escHtml(msg)}</div>`;
   }
 }
 
@@ -1409,7 +1412,7 @@ async function fetchRecipientInfo(toAddr) {
     document.getElementById('send-btn').disabled = false;
 
   } catch (e) {
-    resetErr(e.message);
+    resetErr(typeof e === 'string' ? e : (e?.message || e?.reason || JSON.stringify(e) || 'Unknown error'));
   }
 }
 
@@ -1523,7 +1526,8 @@ async function sendMessage() {
     document.getElementById('subject-input').value = '';
 
   } catch (e) {
-    statusEl.innerHTML = `<div class="alert alert-error">✗ ${escHtml(e.message)}</div>`;
+    const msg = typeof e === 'string' ? e : (e?.message || e?.reason || JSON.stringify(e) || 'Unknown error');
+    statusEl.innerHTML = `<div class="alert alert-error">✗ ${escHtml(msg)}</div>`;
   } finally {
     sendBtn.disabled = false;
     sendBtn.textContent = 'Send Message';
