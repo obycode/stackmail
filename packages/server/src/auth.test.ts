@@ -64,6 +64,10 @@ const testConfig: Config = {
   minFeeSats: '100',
   maxPendingPerSender: 5,
   maxPendingPerRecipient: 20,
+  maxDeferredPerSender: 5,
+  maxDeferredPerRecipient: 20,
+  maxDeferredGlobal: 200,
+  deferredMessageTtlMs: 86_400_000,
   inboxSessionTtlMs: 300_000,
 };
 
@@ -78,11 +82,22 @@ function makeMockStore(): MessageStore {
     saveMessage: async () => {},
     getInbox: async () => [],
     getMessage: async () => null,
+    getMessageForSender: async () => null,
     claimMessage: async () => { throw new Error('not implemented'); },
     getClaimedMessage: async () => null,
     markPaymentSettled: async () => {},
+    markMessagePreviewed: async () => null,
+    cancelMessageBySender: async () => null,
+    recordSettlement: async () => {},
+    getSettlement: async () => null,
+    activateDeferredMessage: async () => {},
+    getDeferredMessagesForRecipient: async () => [],
+    expireDeferredMessages: async () => 0,
     countPendingFromSender: async () => 0,
     countPendingToRecipient: async () => 0,
+    countDeferredFromSender: async () => 0,
+    countDeferredToRecipient: async () => 0,
+    countDeferredGlobal: async () => 0,
   };
 }
 

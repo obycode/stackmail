@@ -16,6 +16,7 @@ import type { MessageStore } from './store.js';
 import { PaymentError } from './payment.js';
 import type { VerifiedPayment } from './payment.js';
 import type { PendingPayment } from './types.js';
+import type { DeferredReason } from './types.js';
 
 export interface IPaymentService {
   verifyIncomingPayment(proofRaw: string): Promise<VerifiedPayment>;
@@ -45,12 +46,25 @@ export interface IPaymentService {
     pipeKey: {
       'principal-1': string;
       'principal-2': string;
-      token: string | null;
+    token: string | null;
     };
     serverBalance: string;
     counterpartyBalance: string;
+    settledServerBalance?: string;
+    settledCounterpartyBalance?: string;
+    pendingServerBalance?: string;
+    pendingCounterpartyBalance?: string;
     nonce: string;
   } | null>;
+  recordCompletedIncomingPayment?(args: { paymentProof: string; secret: string }): Promise<void>;
+  cancelMessage?(args: {
+    paymentProof: string;
+    senderAddr: string;
+    recipientAddr: string;
+    incomingAmount: string;
+    fee: string;
+    recipientPendingPayment: PendingPayment | null;
+  }): Promise<void>;
 }
 import { verifyInboxAuth, verifyInboxSessionToken, issueInboxSessionToken, pubkeyToStxAddress, AuthError, AUTH_DOMAIN } from './auth.js';
 import { verifySecretHash } from '@stackmail/crypto';
@@ -79,6 +93,28 @@ export function createMailServer(
       serverAddress: pipeCounterparty,
       recipientAddr,
     };
+  }
+
+  async function activateDeferredMessages(recipientAddr: string): Promise<void> {
+    if (!sfContractId) return;
+    const now = Date.now();
+    await store.expireDeferredMessages(now);
+    const deferred = await store.getDeferredMessagesForRecipient(recipientAddr, now, config.maxPendingPerRecipient);
+    for (const message of deferred) {
+      const pendingPayment = await paymentService.createOutgoingPayment({
+        hashedSecret: message.hashedSecret,
+        incomingAmount: message.amount,
+        recipientAddr,
+        contractId: sfContractId,
+      });
+      if (!pendingPayment) break;
+      await store.activateDeferredMessage(message.id, recipientAddr, pendingPayment);
+    }
+  }
+
+  async function determineDeferredReason(recipientAddr: string): Promise<DeferredReason> {
+    const tracked = await paymentService.getTrackedTapState?.(recipientAddr);
+    return tracked == null ? 'no-recipient-tap' : 'insufficient-recipient-liquidity';
   }
 
   // ─── Handlers ──────────────────────────────────────────────────────────────
@@ -191,9 +227,52 @@ export function createMailServer(
       : null;
 
     if (sfContractId && pendingPayment == null) {
-      return json(res, 409, {
-        error: 'recipient-payment-unavailable',
-        message: 'recipient does not have a tracked tap with the reservoir yet, or reservoir liquidity is insufficient',
+      const deferredPerSender = await store.countDeferredFromSender(verified.senderAddress, to);
+      if (deferredPerSender >= config.maxDeferredPerSender) {
+        return json(res, 429, {
+          error: 'too-many-deferred-from-sender',
+          message: `Too many deferred messages from this sender (limit: ${config.maxDeferredPerSender})`,
+        });
+      }
+      const deferredPerRecipient = await store.countDeferredToRecipient(to);
+      if (deferredPerRecipient >= config.maxDeferredPerRecipient) {
+        return json(res, 429, {
+          error: 'too-many-deferred-for-recipient',
+          message: `Recipient already has too many deferred messages (limit: ${config.maxDeferredPerRecipient})`,
+        });
+      }
+      const deferredGlobal = await store.countDeferredGlobal();
+      if (deferredGlobal >= config.maxDeferredGlobal) {
+        return json(res, 429, {
+          error: 'deferred-queue-full',
+          message: `Server deferred queue is full (limit: ${config.maxDeferredGlobal})`,
+        });
+      }
+
+      const deferredReason = await determineDeferredReason(to);
+      const msgId = randomUUID();
+      await store.saveMessage({
+        id: msgId,
+        from: verified.senderAddress,
+        to,
+        sentAt: Date.now(),
+        amount: verified.incomingAmount,
+        fee: config.minFeeSats,
+        paymentId: proofRaw,
+        hashedSecret: verified.hashedSecret,
+        encryptedPayload,
+        pendingPayment: null,
+        deliveryState: 'deferred',
+        deferredReason,
+        deferredUntil: Date.now() + config.deferredMessageTtlMs,
+        claimed: false,
+        paymentSettled: false,
+      });
+      return json(res, 202, {
+        ok: true,
+        deferred: true,
+        reason: deferredReason,
+        messageId: msgId,
       });
     }
 
@@ -209,6 +288,7 @@ export function createMailServer(
       hashedSecret: verified.hashedSecret,
       encryptedPayload,
       pendingPayment,
+      deliveryState: 'ready',
       claimed: false,
       paymentSettled: false,
     });
@@ -219,6 +299,7 @@ export function createMailServer(
   async function handleGetInbox(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
     const auth = await requireAuth(req, res, { action: 'get-inbox' });
     if (!auth) return;
+    await activateDeferredMessages(auth.payload.address);
 
     const limit = parseInt(url.searchParams.get('limit') ?? '50', 10);
     const before = url.searchParams.get('before') ? parseInt(url.searchParams.get('before')!, 10) : undefined;
@@ -232,9 +313,15 @@ export function createMailServer(
     const auth = await requireAuth(req, res, { action: 'get-message', messageId: msgId });
     if (!auth) return;
 
-    const stored = await store.getMessage(msgId, auth.payload.address);
+    const stored = await store.markMessagePreviewed(msgId, auth.payload.address, Date.now());
     if (!stored) return json(res, 404, { error: 'not-found' });
     if (stored.claimed) return json(res, 409, { error: 'already-claimed' });
+    if ((stored.deliveryState !== 'ready' && stored.deliveryState !== 'previewed') || stored.pendingPayment == null) {
+      return json(res, 409, {
+        error: 'message-not-ready',
+        message: 'message is still waiting for recipient liquidity or tap setup',
+      });
+    }
 
     return json(res, 200, {
       messageId: stored.id,
@@ -254,6 +341,46 @@ export function createMailServer(
     const msg = await store.getClaimedMessage(msgId, auth.payload.address);
     if (!msg) return json(res, 404, { error: 'not-found' });
     return json(res, 200, { message: msg });
+  }
+
+  async function handleCancelMessage(req: IncomingMessage, res: ServerResponse, msgId: string): Promise<void> {
+    const auth = await requireAuth(req, res, { action: 'cancel-message', messageId: msgId });
+    if (!auth) return;
+
+    const stored = await store.getMessageForSender(msgId, auth.payload.address);
+    if (!stored) return json(res, 404, { error: 'not-found' });
+    if (stored.claimed || stored.deliveryState === 'settled') {
+      return json(res, 409, { error: 'already-claimed', message: 'message has already been claimed' });
+    }
+    if (stored.deliveryState === 'previewed') {
+      return json(res, 409, { error: 'already-previewed', message: 'message can no longer be cancelled after preview' });
+    }
+    if (stored.deliveryState === 'cancelled') {
+      return json(res, 409, { error: 'already-cancelled' });
+    }
+
+    try {
+      await paymentService.cancelMessage?.({
+        paymentProof: stored.paymentId,
+        senderAddr: stored.from,
+        recipientAddr: stored.to,
+        incomingAmount: stored.amount,
+        fee: stored.fee,
+        recipientPendingPayment: stored.pendingPayment,
+      });
+    } catch (err) {
+      if (err instanceof PaymentError) {
+        return json(res, err.statusCode, { error: err.reason, message: err.message });
+      }
+      if (err instanceof Error && 'statusCode' in err && 'reason' in err) {
+        const e = err as Error & { statusCode: number; reason: string };
+        return json(res, e.statusCode, { error: e.reason, message: e.message });
+      }
+      throw err;
+    }
+    const cancelled = await store.cancelMessageBySender(msgId, auth.payload.address, Date.now());
+    if (!cancelled) return json(res, 404, { error: 'not-found' });
+    return json(res, 200, { ok: true, messageId: msgId, deliveryState: cancelled.deliveryState });
   }
 
   async function handleClaim(req: IncomingMessage, res: ServerResponse, msgId: string): Promise<void> {
@@ -281,6 +408,12 @@ export function createMailServer(
     const stored = await store.getMessage(msgId, auth.payload.address);
     if (!stored) return json(res, 404, { error: 'not-found' });
     if (stored.claimed) return json(res, 409, { error: 'already-claimed' });
+    if ((stored.deliveryState !== 'ready' && stored.deliveryState !== 'previewed') || stored.pendingPayment == null) {
+      return json(res, 409, {
+        error: 'message-not-ready',
+        message: 'message is still waiting for recipient liquidity or tap setup',
+      });
+    }
 
     if (!verifySecretHash(data.secret, stored.hashedSecret)) {
       return json(res, 400, { error: 'invalid-secret', message: 'hash(secret) does not match payment hashedSecret' });
@@ -296,7 +429,19 @@ export function createMailServer(
       throw err;
     }
 
-    await store.markPaymentSettled(stored.paymentId);
+    await store.recordSettlement({
+      messageId: stored.id,
+      paymentId: stored.paymentId,
+      recipientAddr: auth.payload.address,
+      hashedSecret: stored.hashedSecret,
+      secret: data.secret,
+      pendingPayment: stored.pendingPayment,
+      settledAt: Date.now(),
+    });
+    await paymentService.recordCompletedIncomingPayment?.({
+      paymentProof: stored.paymentId,
+      secret: data.secret,
+    });
 
     return json(res, 200, {
       message,
@@ -394,6 +539,10 @@ export function createMailServer(
             myBalance: tap.counterpartyBalance,
             sendCapacity: tap.counterpartyBalance,
             receiveLiquidity: tap.serverBalance,
+            settledServerBalance: tap.settledServerBalance,
+            settledMyBalance: tap.settledCounterpartyBalance,
+            pendingServerBalance: tap.pendingServerBalance,
+            pendingMyBalance: tap.pendingCounterpartyBalance,
             nonce: tap.nonce,
           },
     });
@@ -485,6 +634,11 @@ export function createMailServer(
       return handleSend(req, res, decodeURIComponent(sendMatch[1]));
     }
 
+    const cancelMatch = path.match(/^\/messages\/([^/]+)\/cancel$/);
+    if (method === 'POST' && cancelMatch) {
+      return handleCancelMessage(req, res, decodeURIComponent(cancelMatch[1]));
+    }
+
     if (method === 'GET' && path === '/inbox') {
       return handleGetInbox(req, res, url);
     }
@@ -516,7 +670,7 @@ export function createMailServer(
   async function requireAuth(
     req: IncomingMessage,
     res: ServerResponse,
-    expected: { action: 'get-inbox' | 'claim-message' | 'get-message'; messageId?: string },
+    expected: { action: 'get-inbox' | 'claim-message' | 'get-message' | 'cancel-message'; messageId?: string },
   ): Promise<Awaited<ReturnType<typeof verifyInboxAuth>> | null> {
     const sessionHeader = req.headers['x-stackmail-session'];
     if (sessionHeader) {

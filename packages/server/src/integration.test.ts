@@ -22,6 +22,8 @@ import type { Server } from 'node:http';
 class MockPaymentService implements IPaymentService {
   trackedTapState: Awaited<ReturnType<NonNullable<IPaymentService['getTrackedTapState']>>> = null;
   outgoingPaymentEnabled = true;
+  completedIncomingPayments: Array<{ paymentProof: string; secret: string }> = [];
+  cancelledMessages: Array<{ paymentProof: string; senderAddr: string; recipientAddr: string; incomingAmount: string; fee: string }> = [];
 
   async verifyIncomingPayment(proofRaw: string): Promise<VerifiedPayment> {
     let proof: Record<string, unknown>;
@@ -95,9 +97,34 @@ class MockPaymentService implements IPaymentService {
     };
     serverBalance: string;
     counterpartyBalance: string;
+    settledServerBalance?: string;
+    settledCounterpartyBalance?: string;
+    pendingServerBalance?: string;
+    pendingCounterpartyBalance?: string;
     nonce: string;
   } | null> {
     return this.trackedTapState;
+  }
+
+  async recordCompletedIncomingPayment(args: { paymentProof: string; secret: string }): Promise<void> {
+    this.completedIncomingPayments.push(args);
+  }
+
+  async cancelMessage(args: {
+    paymentProof: string;
+    senderAddr: string;
+    recipientAddr: string;
+    incomingAmount: string;
+    fee: string;
+    recipientPendingPayment: PendingPayment | null;
+  }): Promise<void> {
+    this.cancelledMessages.push({
+      paymentProof: args.paymentProof,
+      senderAddr: args.senderAddr,
+      recipientAddr: args.recipientAddr,
+      incomingAmount: args.incomingAmount,
+      fee: args.fee,
+    });
   }
 }
 
@@ -139,9 +166,8 @@ function buildAuthHeader(opts: {
 
 // ─── Test setup ───────────────────────────────────────────────────────────────
 
-const senderEcdh = createECDH('secp256k1');
-senderEcdh.generateKeys();
-const senderPubkeyHex = senderEcdh.getPublicKey('hex', 'compressed');
+const senderSignKeypair = generateSecp256k1Keypair();
+const senderPubkeyHex = senderSignKeypair.compressedPubkeyHex;
 
 const recipientSignKeypair = generateSecp256k1Keypair();
 const recipientEcdhForEncrypt = createECDH('secp256k1');
@@ -168,6 +194,10 @@ const serverConfig: Config = {
   minFeeSats: '100',
   maxPendingPerSender: 5,
   maxPendingPerRecipient: 20,
+  maxDeferredPerSender: 5,
+  maxDeferredPerRecipient: 20,
+  maxDeferredGlobal: 200,
+  deferredMessageTtlMs: 86_400_000,
   inboxSessionTtlMs: 300_000,
 };
 
@@ -219,6 +249,10 @@ describe('GET /tap/state', () => {
       },
       serverBalance: '1200',
       counterpartyBalance: '8800',
+      settledServerBalance: '1000',
+      settledCounterpartyBalance: '8000',
+      pendingServerBalance: '200',
+      pendingCounterpartyBalance: '800',
       nonce: '3',
     };
 
@@ -235,12 +269,30 @@ describe('GET /tap/state', () => {
     expect(res.status).toBe(200);
     const body = await res.json() as {
       ok: boolean;
-      tap: { contractId: string; serverBalance: string; myBalance: string; nonce: string; token: string | null };
+      tap: {
+        contractId: string;
+        serverBalance: string;
+        myBalance: string;
+        sendCapacity: string;
+        receiveLiquidity: string;
+        settledServerBalance?: string;
+        settledMyBalance?: string;
+        pendingServerBalance?: string;
+        pendingMyBalance?: string;
+        nonce: string;
+        token: string | null;
+      };
     };
     expect(body.ok).toBe(true);
     expect(body.tap.contractId).toBe(serverConfig.sfContractId);
     expect(body.tap.serverBalance).toBe('1200');
     expect(body.tap.myBalance).toBe('8800');
+    expect(body.tap.sendCapacity).toBe('8800');
+    expect(body.tap.receiveLiquidity).toBe('1200');
+    expect(body.tap.settledServerBalance).toBe('1000');
+    expect(body.tap.settledMyBalance).toBe('8000');
+    expect(body.tap.pendingServerBalance).toBe('200');
+    expect(body.tap.pendingMyBalance).toBe('800');
     expect(body.tap.nonce).toBe('3');
     expect(body.tap.token).toBeNull();
   });
@@ -398,6 +450,8 @@ describe('full send → inbox → preview → claim flow', () => {
     const body = await res.json() as Record<string, unknown>;
     expect(body.messageId).toBe(messageId);
     expect(body.encryptedPayload).toBeDefined();
+    const stored = await store.getMessage(messageId, recipientAddress);
+    expect(stored?.deliveryState).toBe('previewed');
     const enc = body.encryptedPayload as { v: number; epk: string; iv: string; data: string };
     expect(enc.v).toBe(1);
     expect(typeof enc.epk).toBe('string');
@@ -466,7 +520,7 @@ describe('full send → inbox → preview → claim flow', () => {
 });
 
 describe('recipient tap requirement', () => {
-  it('rejects sending when the server cannot create the outgoing recipient payment', async () => {
+  it('defers sending when the server cannot create the outgoing recipient payment, then activates later', async () => {
     paymentService.outgoingPaymentEnabled = false;
     const secretHex = randomBytes(32).toString('hex');
     const hashedSecretHex = hashSecret(secretHex);
@@ -494,10 +548,31 @@ describe('recipient tap requirement', () => {
       }),
     });
 
-    expect(res.status).toBe(409);
-    const body = await res.json() as { error: string };
-    expect(body.error).toBe('recipient-payment-unavailable');
+    expect(res.status).toBe(202);
+    const body = await res.json() as { deferred: boolean; reason: string; messageId: string };
+    expect(body.deferred).toBe(true);
+    expect(['no-recipient-tap', 'insufficient-recipient-liquidity']).toContain(body.reason);
+
+    const authHeader = buildAuthHeader({
+      pubkey: recipientSignKeypair.compressedPubkeyHex,
+      action: 'get-inbox',
+      address: recipientAddress,
+      privateKey: recipientSignKeypair.privateKey,
+    });
+    const inboxBefore = await fetch(`${baseUrl}/inbox`, {
+      headers: { 'x-stackmail-auth': authHeader },
+    });
+    expect(inboxBefore.status).toBe(200);
+    const inboxBeforeBody = await inboxBefore.json() as { messages: Array<{ id: string }> };
+    expect(inboxBeforeBody.messages.some(m => m.id === body.messageId)).toBe(false);
+
     paymentService.outgoingPaymentEnabled = true;
+    const inboxAfter = await fetch(`${baseUrl}/inbox`, {
+      headers: { 'x-stackmail-auth': authHeader },
+    });
+    expect(inboxAfter.status).toBe(200);
+    const inboxAfterBody = await inboxAfter.json() as { messages: Array<{ id: string }> };
+    expect(inboxAfterBody.messages.some(m => m.id === body.messageId)).toBe(true);
   });
 });
 
@@ -601,7 +676,7 @@ describe('sender identity binding', () => {
 });
 
 describe('claim finalization', () => {
-  it('marks payment as settled when claim succeeds', async () => {
+  it('marks payment as settled and stores the revealed secret when claim succeeds', async () => {
     const finalizeStore = new SqliteMessageStore(':memory:');
     await finalizeStore.init();
     const finalizeService = new MockPaymentService();
@@ -656,8 +731,116 @@ describe('claim finalization', () => {
 
     const stored = await finalizeStore.getMessage(messageId, recipientAddress);
     expect(stored?.paymentSettled).toBe(true);
+    expect(stored?.deliveryState).toBe('settled');
+    const settlement = await finalizeStore.getSettlement(messageId);
+    expect(settlement?.paymentId).toBe(proof);
+    expect(settlement?.secret).toBe(secretHex);
+    expect(settlement?.hashedSecret).toBe(hashedSecretHex);
+    expect(finalizeService.completedIncomingPayments).toEqual([{ paymentProof: proof, secret: secretHex }]);
 
     await new Promise<void>((r, j) => finalizeServer.close(e => e ? j(e) : r()));
+  });
+});
+
+describe('sender cancel', () => {
+  it('allows sender cancel before preview and blocks cancel after preview', async () => {
+    const cancelStore = new SqliteMessageStore(':memory:');
+    await cancelStore.init();
+    const cancelService = new MockPaymentService();
+    const cancelServer = createMailServer(serverConfig, cancelStore, cancelService);
+    await new Promise<void>(r => cancelServer.listen(0, '127.0.0.1', () => r()));
+    const cancelUrl = `http://127.0.0.1:${(cancelServer.address() as AddressInfo).port}`;
+
+    const senderAddress = pubkeyToStxAddress(senderPubkeyHex);
+    const sendMessage = async (bodyText: string) => {
+      const secretHex = randomBytes(32).toString('hex');
+      const hashedSecretHex = hashSecret(secretHex);
+      const encryptedPayload = encryptMail(
+        { v: 1, secret: secretHex, body: bodyText },
+        recipientEncryptPubkeyHex,
+      );
+      const proof = JSON.stringify({
+        contractId: serverConfig.sfContractId,
+        pipeKey: {
+          'principal-1': senderAddress,
+          'principal-2': 'SP3QFYVTMS0PRJT3K3GMDW9DGR33TDHENSDWVNQMR.sm-reservoir',
+          token: 'SP3QFYVTMS0PRJT3K3GMDW9DGR33TDHENSDWVNQMR.sm-test-token',
+        },
+        forPrincipal: senderAddress,
+        withPrincipal: senderAddress,
+        myBalance: '1000',
+        theirBalance: '0',
+        nonce: '1',
+        action: '1',
+        actor: senderAddress,
+        hashedSecret: hashedSecretHex,
+        theirSignature: '0x' + '22'.repeat(65),
+        amount: '1000',
+      });
+      const sendRes = await fetch(`${cancelUrl}/messages/${recipientAddress}`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-x402-payment': proof,
+        },
+        body: JSON.stringify({
+          from: senderAddress,
+          fromPublicKey: senderPubkeyHex,
+          encryptedPayload,
+        }),
+      });
+      expect(sendRes.status).toBe(200);
+      const sendBody = await sendRes.json() as { messageId: string };
+      return sendBody.messageId;
+    };
+
+    const cancellableId = await sendMessage('cancellable');
+    const cancelAuth = buildAuthHeader({
+      pubkey: senderPubkeyHex,
+      action: 'cancel-message',
+      address: senderAddress,
+      messageId: cancellableId,
+      privateKey: senderSignKeypair.privateKey,
+    });
+    const cancelRes = await fetch(`${cancelUrl}/messages/${cancellableId}/cancel`, {
+      method: 'POST',
+      headers: { 'x-stackmail-auth': cancelAuth },
+    });
+    expect(cancelRes.status).toBe(200);
+    const cancelled = await cancelStore.getMessageForSender(cancellableId, senderAddress);
+    expect(cancelled?.deliveryState).toBe('cancelled');
+    expect(cancelService.cancelledMessages).toHaveLength(1);
+    expect(cancelService.cancelledMessages[0]?.senderAddr).toBe(senderAddress);
+
+    const previewedId = await sendMessage('preview first');
+    const inboxAuth = buildAuthHeader({
+      pubkey: recipientSignKeypair.compressedPubkeyHex,
+      action: 'get-message',
+      address: recipientAddress,
+      messageId: previewedId,
+      privateKey: recipientSignKeypair.privateKey,
+    });
+    const previewRes = await fetch(`${cancelUrl}/inbox/${previewedId}/preview`, {
+      headers: { 'x-stackmail-auth': inboxAuth },
+    });
+    expect(previewRes.status).toBe(200);
+
+    const cancelAfterPreviewAuth = buildAuthHeader({
+      pubkey: senderPubkeyHex,
+      action: 'cancel-message',
+      address: senderAddress,
+      messageId: previewedId,
+      privateKey: senderSignKeypair.privateKey,
+    });
+    const cancelAfterPreviewRes = await fetch(`${cancelUrl}/messages/${previewedId}/cancel`, {
+      method: 'POST',
+      headers: { 'x-stackmail-auth': cancelAfterPreviewAuth },
+    });
+    expect(cancelAfterPreviewRes.status).toBe(409);
+    const errorBody = await cancelAfterPreviewRes.json() as { error: string };
+    expect(errorBody.error).toBe('already-previewed');
+
+    await new Promise<void>((r, j) => cancelServer.close(e => e ? j(e) : r()));
   });
 });
 

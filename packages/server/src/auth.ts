@@ -44,7 +44,7 @@ export class AuthError extends Error {
 }
 
 export interface AuthPayload {
-  action: 'get-inbox' | 'claim-message' | 'get-message';
+  action: 'get-inbox' | 'claim-message' | 'get-message' | 'cancel-message';
   address: string;    // STX address (SP...)
   timestamp: number;  // unix ms
   messageId?: string;

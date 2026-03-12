@@ -162,18 +162,20 @@ describe('ReservoirService', () => {
     });
     expect(pending).not.toBeNull();
 
-    const row = db.prepare(`
-      SELECT nonce, last_action, last_actor, last_hashed_secret,
-             last_server_signature, last_counterparty_signature
-      FROM reservoir_pipes WHERE pipe_id = ?
-    `).get(pipeId(contractId, incomingPipeKey['principal-1'], incomingPipeKey['principal-2'])) as Record<string, unknown>;
+    const rows = db.prepare(`
+      SELECT nonce, action, actor, hashed_secret, server_signature, counterparty_signature
+      FROM reservoir_pending_states WHERE pipe_id = ?
+      ORDER BY CAST(nonce AS INTEGER) ASC
+    `).all(pipeId(contractId, incomingPipeKey['principal-1'], incomingPipeKey['principal-2'])) as Record<string, unknown>[];
 
-    expect(row['nonce']).toBe('2');
-    expect(row['last_action']).toBe('1');
-    expect(row['last_actor']).toBe(serverAddress);
-    expect(row['last_hashed_secret']).toBe(outgoingSecret);
-    expect(typeof row['last_server_signature']).toBe('string');
-    expect(row['last_counterparty_signature']).toBe(incomingSig);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]['nonce']).toBe('1');
+    expect(rows[0]['counterparty_signature']).toBe(incomingSig);
+    expect(rows[1]['nonce']).toBe('2');
+    expect(rows[1]['action']).toBe('1');
+    expect(rows[1]['actor']).toBe(serverAddress);
+    expect(rows[1]['hashed_secret']).toBe(outgoingSecret);
+    expect(typeof rows[1]['server_signature']).toBe('string');
   });
 
   it('rejects non-canonical pipe principal order', async () => {
@@ -354,7 +356,7 @@ describe('ReservoirService', () => {
 
     const row = db.prepare(`
       SELECT server_balance, counterparty_balance, nonce
-      FROM reservoir_pipes WHERE pipe_id = ?
+      FROM reservoir_pending_states WHERE pipe_id = ?
     `).get(pipeId(contractId, principals['principal-1'], principals['principal-2'])) as Record<string, unknown>;
 
     expect(row.server_balance).toBe('11000');

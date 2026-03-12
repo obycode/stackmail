@@ -45,6 +45,24 @@ interface PipeRow {
   last_valid_after: string | null;
   last_server_signature: string | null;
   last_counterparty_signature: string | null;
+  enforceable_secret: string | null;
+  updated_at?: number;
+}
+
+interface PendingPipeStateRow {
+  pipe_id: string;
+  contract_id: string;
+  pipe_key_json: string;
+  server_balance: string;
+  counterparty_balance: string;
+  nonce: string;
+  action: string | null;
+  actor: string | null;
+  hashed_secret: string | null;
+  valid_after: string | null;
+  server_signature: string | null;
+  counterparty_signature: string | null;
+  updated_at: number;
 }
 
 interface OnChainPipeState {
@@ -129,6 +147,22 @@ interface PipeUpdateMeta {
   validAfter?: string | null;
   serverSignature?: string | null;
   counterpartySignature?: string | null;
+  enforceableSecret?: string | null;
+}
+
+interface ParsedPaymentProof {
+  proofRaw: string;
+  contractId: string;
+  pipeKey: { 'principal-1': string; 'principal-2': string; token: string | null };
+  pipeId: string;
+  myBalance: string;
+  theirBalance: string;
+  nonce: string;
+  action: string;
+  actor: string;
+  hashedSecret: string | null;
+  theirSignature: string | null;
+  validAfter: string | null;
 }
 
 export class ReservoirService {
@@ -170,11 +204,15 @@ export class ReservoirService {
     pipeKey: { 'principal-1': string; 'principal-2': string; token: string | null };
     serverBalance: string;
     counterpartyBalance: string;
+    settledServerBalance?: string;
+    settledCounterpartyBalance?: string;
+    pendingServerBalance?: string;
+    pendingCounterpartyBalance?: string;
     nonce: string;
   } | null> {
     if (!this.contractId) return null;
     const principals = canonicalPipePrincipals(this.serverAddress, counterparty);
-    const row = this.getLatestPipeRowForPrincipals(
+    const row = this.getLatestPipeStateForPrincipals(
       this.contractId,
       principals['principal-1'],
       principals['principal-2'],
@@ -187,11 +225,30 @@ export class ReservoirService {
       token: string | null;
     };
 
+    const onChainPipe = await this.getOnChainPipeState(counterparty, pipeKey);
+    const serverIsPrincipal1 = pipeKey['principal-1'] === this.serverAddress;
+    const settledServerBalance = onChainPipe
+      ? (serverIsPrincipal1 ? onChainPipe.balance1 : onChainPipe.balance2).toString()
+      : undefined;
+    const settledCounterpartyBalance = onChainPipe
+      ? (serverIsPrincipal1 ? onChainPipe.balance2 : onChainPipe.balance1).toString()
+      : undefined;
+    const pendingServerBalance = onChainPipe
+      ? (serverIsPrincipal1 ? onChainPipe.pending1 : onChainPipe.pending2).toString()
+      : undefined;
+    const pendingCounterpartyBalance = onChainPipe
+      ? (serverIsPrincipal1 ? onChainPipe.pending2 : onChainPipe.pending1).toString()
+      : undefined;
+
     return {
       contractId: row.contract_id,
       pipeKey,
       serverBalance: row.server_balance,
       counterpartyBalance: row.counterparty_balance,
+      settledServerBalance,
+      settledCounterpartyBalance,
+      pendingServerBalance,
+      pendingCounterpartyBalance,
       nonce: row.nonce,
     };
   }
@@ -212,8 +269,27 @@ export class ReservoirService {
         last_valid_after TEXT,
         last_server_signature TEXT,
         last_counterparty_signature TEXT,
+        enforceable_secret TEXT,
         updated_at       INTEGER NOT NULL DEFAULT (unixepoch('now') * 1000)
       );
+
+      CREATE TABLE IF NOT EXISTS reservoir_pending_states (
+        pipe_id          TEXT NOT NULL,
+        nonce            TEXT NOT NULL,
+        contract_id      TEXT NOT NULL,
+        pipe_key_json    TEXT NOT NULL,
+        server_balance   TEXT NOT NULL,
+        counterparty_balance TEXT NOT NULL,
+        action           TEXT,
+        actor            TEXT,
+        hashed_secret    TEXT,
+        valid_after      TEXT,
+        server_signature TEXT,
+        counterparty_signature TEXT,
+        updated_at       INTEGER NOT NULL DEFAULT (unixepoch('now') * 1000),
+        PRIMARY KEY (pipe_id, nonce)
+      );
+      CREATE INDEX IF NOT EXISTS idx_pending_pipe_updated ON reservoir_pending_states (pipe_id, updated_at DESC);
     `);
 
     const cols = db.prepare(`PRAGMA table_info('reservoir_pipes')`).all() as Array<{ name: string }>;
@@ -229,6 +305,7 @@ export class ReservoirService {
     ensureColumn('last_valid_after', 'TEXT');
     ensureColumn('last_server_signature', 'TEXT');
     ensureColumn('last_counterparty_signature', 'TEXT');
+    ensureColumn('enforceable_secret', 'TEXT');
   }
 
   private assertDb(): DB {
@@ -283,10 +360,83 @@ export class ReservoirService {
     return `${contractId}|${tokenPart}|${pipeKey['principal-1']}|${pipeKey['principal-2']}`;
   }
 
+  private parseIncomingPaymentProof(proofRaw: string): ParsedPaymentProof {
+    let proof: Record<string, unknown>;
+    try {
+      try {
+        proof = JSON.parse(Buffer.from(proofRaw, 'base64url').toString('utf-8')) as Record<string, unknown>;
+      } catch {
+        proof = JSON.parse(proofRaw) as Record<string, unknown>;
+      }
+    } catch {
+      throw new ReservoirError(400, 'invalid payment header encoding', 'invalid-proof-encoding');
+    }
+
+    const contractId = typeof proof['contractId'] === 'string' ? proof['contractId'] : this.contractId;
+    const pipeKeyRaw = proof['pipeKey'];
+    if (!pipeKeyRaw || typeof pipeKeyRaw !== 'object' || Array.isArray(pipeKeyRaw)) {
+      throw new ReservoirError(400, 'payment proof missing pipeKey', 'missing-pipe-key');
+    }
+    const pipeKey = pipeKeyRaw as { 'principal-1': string; 'principal-2': string; token?: string | null };
+    if (typeof pipeKey['principal-1'] !== 'string' || typeof pipeKey['principal-2'] !== 'string') {
+      throw new ReservoirError(400, 'pipeKey principals must be strings', 'invalid-pipe-key');
+    }
+    if (pipeKey['principal-1'] === pipeKey['principal-2']) {
+      throw new ReservoirError(400, 'pipeKey principals must be distinct', 'invalid-pipe-key');
+    }
+    if (pipeKey.token != null && typeof pipeKey.token !== 'string') {
+      throw new ReservoirError(400, 'pipeKey token must be a principal or null', 'invalid-pipe-key');
+    }
+    const canonical = canonicalPipePrincipals(pipeKey['principal-1'], pipeKey['principal-2']);
+    if (
+      canonical['principal-1'] !== pipeKey['principal-1'] ||
+      canonical['principal-2'] !== pipeKey['principal-2']
+    ) {
+      throw new ReservoirError(402, 'pipeKey principals must be canonical', 'non-canonical-pipe-key');
+    }
+
+    return {
+      proofRaw,
+      contractId,
+      pipeKey: {
+        'principal-1': pipeKey['principal-1'],
+        'principal-2': pipeKey['principal-2'],
+        token: pipeKey.token == null ? null : pipeKey.token,
+      },
+      pipeId: this.buildPipeId(contractId, pipeKey),
+      myBalance: typeof proof['myBalance'] === 'string' ? proof['myBalance'] : String(proof['myBalance'] ?? ''),
+      theirBalance: typeof proof['theirBalance'] === 'string' ? proof['theirBalance'] : String(proof['theirBalance'] ?? ''),
+      nonce: String(proof['nonce'] ?? ''),
+      action: String(proof['action'] ?? '1'),
+      actor: typeof proof['actor'] === 'string' ? proof['actor'] : '',
+      hashedSecret: typeof proof['hashedSecret'] === 'string' ? normalizeHex32(proof['hashedSecret']) : null,
+      theirSignature: typeof proof['theirSignature'] === 'string' ? proof['theirSignature'] : null,
+      validAfter: typeof proof['validAfter'] === 'string' ? proof['validAfter'] : null,
+    };
+  }
+
   private getPipeRow(pipeId: string): PipeRow | null {
     return this.assertDb()
       .prepare('SELECT * FROM reservoir_pipes WHERE pipe_id = ?')
       .get(pipeId) as PipeRow | null;
+  }
+
+  private getPendingPipeRows(pipeId: string): PendingPipeStateRow[] {
+    return this.assertDb()
+      .prepare('SELECT * FROM reservoir_pending_states WHERE pipe_id = ? ORDER BY CAST(nonce AS INTEGER) DESC, updated_at DESC')
+      .all(pipeId) as PendingPipeStateRow[];
+  }
+
+  private getLatestPendingPipeRow(pipeId: string): PendingPipeStateRow | null {
+    return this.assertDb()
+      .prepare(`
+        SELECT *
+        FROM reservoir_pending_states
+        WHERE pipe_id = ?
+        ORDER BY CAST(nonce AS INTEGER) DESC, updated_at DESC
+        LIMIT 1
+      `)
+      .get(pipeId) as PendingPipeStateRow | null;
   }
 
   private getLatestPipeRowForPrincipals(contractId: string, principal1: string, principal2: string): PipeRow | null {
@@ -303,6 +453,41 @@ export class ReservoirService {
       .get(contractId, `%${suffix}`) as PipeRow | null;
   }
 
+  private getLatestPendingPipeRowForPrincipals(contractId: string, principal1: string, principal2: string): PendingPipeStateRow | null {
+    const suffix = `|${principal1}|${principal2}`;
+    return this.assertDb()
+      .prepare(`
+        SELECT *
+        FROM reservoir_pending_states
+        WHERE contract_id = ?
+          AND pipe_id LIKE ?
+        ORDER BY CAST(nonce AS INTEGER) DESC, updated_at DESC
+        LIMIT 1
+      `)
+      .get(contractId, `%${suffix}`) as PendingPipeStateRow | null;
+  }
+
+  private chooseLatestRow(enforceable: PipeRow | null, pending: PendingPipeStateRow | null): PipeRow | PendingPipeStateRow | null {
+    if (!enforceable) return pending;
+    if (!pending) return enforceable;
+    const en = BigInt(enforceable.nonce);
+    const pn = BigInt(pending.nonce);
+    if (pn > en) return pending;
+    if (pn < en) return enforceable;
+    return (pending.updated_at ?? 0) >= (enforceable.updated_at ?? 0) ? pending : enforceable;
+  }
+
+  private getLatestPipeState(pipeId: string): PipeRow | PendingPipeStateRow | null {
+    return this.chooseLatestRow(this.getPipeRow(pipeId), this.getLatestPendingPipeRow(pipeId));
+  }
+
+  private getLatestPipeStateForPrincipals(contractId: string, principal1: string, principal2: string): PipeRow | PendingPipeStateRow | null {
+    return this.chooseLatestRow(
+      this.getLatestPipeRowForPrincipals(contractId, principal1, principal2),
+      this.getLatestPendingPipeRowForPrincipals(contractId, principal1, principal2),
+    );
+  }
+
   private upsertPipe(
     pipeId: string,
     contractId: string,
@@ -316,9 +501,9 @@ export class ReservoirService {
       INSERT INTO reservoir_pipes (
         pipe_id, contract_id, pipe_key_json, server_balance, counterparty_balance, nonce,
         last_action, last_actor, last_hashed_secret, last_valid_after,
-        last_server_signature, last_counterparty_signature, updated_at
+        last_server_signature, last_counterparty_signature, enforceable_secret, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now') * 1000)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now') * 1000)
       ON CONFLICT(pipe_id) DO UPDATE SET
         server_balance = excluded.server_balance,
         counterparty_balance = excluded.counterparty_balance,
@@ -347,6 +532,10 @@ export class ReservoirService {
           WHEN excluded.last_counterparty_signature IS NULL THEN reservoir_pipes.last_counterparty_signature
           ELSE excluded.last_counterparty_signature
         END,
+        enforceable_secret = CASE
+          WHEN excluded.enforceable_secret IS NULL THEN reservoir_pipes.enforceable_secret
+          ELSE excluded.enforceable_secret
+        END,
         updated_at = excluded.updated_at
     `).run(
       pipeId,
@@ -361,6 +550,162 @@ export class ReservoirService {
       meta.validAfter ?? null,
       meta.serverSignature ?? null,
       meta.counterpartySignature ?? null,
+      meta.enforceableSecret ?? null,
+    );
+  }
+
+  private upsertPendingState(
+    pipeId: string,
+    contractId: string,
+    pipeKey: object,
+    serverBalance: string,
+    counterpartyBalance: string,
+    nonce: string,
+    meta: PipeUpdateMeta = {},
+  ): void {
+    this.assertDb().prepare(`
+      INSERT INTO reservoir_pending_states (
+        pipe_id, nonce, contract_id, pipe_key_json, server_balance, counterparty_balance,
+        action, actor, hashed_secret, valid_after, server_signature, counterparty_signature, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch('now') * 1000)
+      ON CONFLICT(pipe_id, nonce) DO UPDATE SET
+        contract_id = excluded.contract_id,
+        pipe_key_json = excluded.pipe_key_json,
+        server_balance = excluded.server_balance,
+        counterparty_balance = excluded.counterparty_balance,
+        action = excluded.action,
+        actor = excluded.actor,
+        hashed_secret = excluded.hashed_secret,
+        valid_after = excluded.valid_after,
+        server_signature = excluded.server_signature,
+        counterparty_signature = excluded.counterparty_signature,
+        updated_at = excluded.updated_at
+    `).run(
+      pipeId,
+      nonce,
+      contractId,
+      JSON.stringify(pipeKey),
+      serverBalance,
+      counterpartyBalance,
+      meta.action ?? null,
+      meta.actor ?? null,
+      meta.hashedSecret ?? null,
+      meta.validAfter ?? null,
+      meta.serverSignature ?? null,
+      meta.counterpartySignature ?? null,
+    );
+  }
+
+  private deletePendingStatesAtOrBelowNonce(pipeId: string, nonce: string): void {
+    this.assertDb()
+      .prepare('DELETE FROM reservoir_pending_states WHERE pipe_id = ? AND CAST(nonce AS INTEGER) <= CAST(? AS INTEGER)')
+      .run(pipeId, nonce);
+  }
+
+  async cancelMessage(args: {
+    paymentProof: string;
+    senderAddr: string;
+    recipientAddr: string;
+    incomingAmount: string;
+    fee: string;
+    recipientPendingPayment: PendingPayment | null;
+  }): Promise<void> {
+    const parsed = this.parseIncomingPaymentProof(args.paymentProof);
+    const refundAmount = BigInt(args.incomingAmount) - BigInt(args.fee);
+    if (refundAmount <= 0n) return;
+
+    const senderLatest = this.getLatestPipeState(parsed.pipeId);
+    if (!senderLatest) {
+      throw new ReservoirError(404, 'sender pipe not found for cancellation', 'sender-pipe-not-found');
+    }
+    const senderCurrentServerBalance = BigInt(senderLatest.server_balance);
+    const senderCurrentCounterpartyBalance = BigInt(senderLatest.counterparty_balance);
+    if (senderCurrentServerBalance < refundAmount) {
+      throw new ReservoirError(409, 'insufficient server balance to refund sender', 'refund-insufficient-balance');
+    }
+
+    const senderNextServerBalance = (senderCurrentServerBalance - refundAmount).toString();
+    const senderNextCounterpartyBalance = (senderCurrentCounterpartyBalance + refundAmount).toString();
+    const senderNextNonce = (BigInt(senderLatest.nonce) + 1n).toString();
+    const senderMessage = buildTransferMessage({
+      pipeKey: parsed.pipeKey,
+      forPrincipal: args.senderAddr,
+      myBalance: senderNextCounterpartyBalance,
+      theirBalance: senderNextServerBalance,
+      nonce: senderNextNonce,
+      action: '1',
+      actor: this.serverAddress,
+      hashedSecret: null,
+      validAfter: null,
+    });
+    const senderServerSignature = await sip018Sign(parsed.contractId, senderMessage, this.serverPrivateKey, this.chainId);
+    this.upsertPendingState(
+      parsed.pipeId,
+      parsed.contractId,
+      parsed.pipeKey,
+      senderNextServerBalance,
+      senderNextCounterpartyBalance,
+      senderNextNonce,
+      {
+        action: '1',
+        actor: this.serverAddress,
+        hashedSecret: null,
+        validAfter: null,
+        serverSignature: senderServerSignature,
+      },
+    );
+
+    if (!args.recipientPendingPayment) return;
+
+    const principals = canonicalPipePrincipals(this.serverAddress, args.recipientAddr);
+    const recipientLatest = this.getLatestPipeStateForPrincipals(
+      parsed.contractId,
+      principals['principal-1'],
+      principals['principal-2'],
+    );
+    if (!recipientLatest) {
+      throw new ReservoirError(404, 'recipient pipe not found for cancellation rollback', 'recipient-pipe-not-found');
+    }
+    const recipientPipeKey = JSON.parse(recipientLatest.pipe_key_json) as {
+      'principal-1': string;
+      'principal-2': string;
+      token: string | null;
+    };
+    const recipientCurrentServerBalance = BigInt(recipientLatest.server_balance);
+    const recipientCurrentCounterpartyBalance = BigInt(recipientLatest.counterparty_balance);
+    if (recipientCurrentCounterpartyBalance < refundAmount) {
+      throw new ReservoirError(409, 'recipient pending balance is too low to reverse cancellation', 'recipient-reversal-insufficient');
+    }
+    const recipientNextServerBalance = (recipientCurrentServerBalance + refundAmount).toString();
+    const recipientNextCounterpartyBalance = (recipientCurrentCounterpartyBalance - refundAmount).toString();
+    const recipientNextNonce = (BigInt(recipientLatest.nonce) + 1n).toString();
+    const recipientMessage = buildTransferMessage({
+      pipeKey: recipientPipeKey,
+      forPrincipal: args.recipientAddr,
+      myBalance: recipientNextCounterpartyBalance,
+      theirBalance: recipientNextServerBalance,
+      nonce: recipientNextNonce,
+      action: '1',
+      actor: this.serverAddress,
+      hashedSecret: null,
+      validAfter: null,
+    });
+    const recipientServerSignature = await sip018Sign(parsed.contractId, recipientMessage, this.serverPrivateKey, this.chainId);
+    this.upsertPendingState(
+      this.buildPipeId(parsed.contractId, recipientPipeKey),
+      parsed.contractId,
+      recipientPipeKey,
+      recipientNextServerBalance,
+      recipientNextCounterpartyBalance,
+      recipientNextNonce,
+      {
+        action: '1',
+        actor: this.serverAddress,
+        hashedSecret: null,
+        validAfter: null,
+        serverSignature: recipientServerSignature,
+      },
     );
   }
 
@@ -483,17 +828,6 @@ export class ReservoirService {
    *   theirSignature = sender's SIP-018 signature
    */
   async verifyIncomingPayment(proofRaw: string): Promise<VerifiedPayment> {
-    let proof: Record<string, unknown>;
-    try {
-      try {
-        proof = JSON.parse(Buffer.from(proofRaw, 'base64url').toString('utf-8')) as Record<string, unknown>;
-      } catch {
-        proof = JSON.parse(proofRaw) as Record<string, unknown>;
-      }
-    } catch {
-      throw new ReservoirError(400, 'invalid payment header encoding', 'invalid-proof-encoding');
-    }
-
     if (!this.serverPrivateKey) {
       throw new ReservoirError(
         503,
@@ -502,34 +836,18 @@ export class ReservoirService {
       );
     }
 
+    const parsed = this.parseIncomingPaymentProof(proofRaw);
+    const proof = (() => {
+      try {
+        return JSON.parse(Buffer.from(proofRaw, 'base64url').toString('utf-8')) as Record<string, unknown>;
+      } catch {
+        return JSON.parse(proofRaw) as Record<string, unknown>;
+      }
+    })();
+
     // Extract required fields
-    const contractId = typeof proof['contractId'] === 'string' ? proof['contractId'] : this.contractId;
-    const pipeKeyRaw = proof['pipeKey'];
-    if (!pipeKeyRaw || typeof pipeKeyRaw !== 'object' || Array.isArray(pipeKeyRaw)) {
-      throw new ReservoirError(400, 'payment proof missing pipeKey', 'missing-pipe-key');
-    }
-    const pipeKey = pipeKeyRaw as { 'principal-1': string; 'principal-2': string; token?: string | null };
-    if (typeof pipeKey['principal-1'] !== 'string' || typeof pipeKey['principal-2'] !== 'string') {
-      throw new ReservoirError(400, 'pipeKey principals must be strings', 'invalid-pipe-key');
-    }
-    if (pipeKey['principal-1'] === pipeKey['principal-2']) {
-      throw new ReservoirError(400, 'pipeKey principals must be distinct', 'invalid-pipe-key');
-    }
-    if (pipeKey.token != null && typeof pipeKey.token !== 'string') {
-      throw new ReservoirError(400, 'pipeKey token must be a principal or null', 'invalid-pipe-key');
-    }
-    let canonical: { 'principal-1': string; 'principal-2': string };
-    try {
-      canonical = canonicalPipePrincipals(pipeKey['principal-1'], pipeKey['principal-2']);
-    } catch {
-      throw new ReservoirError(400, 'pipeKey contains invalid principals', 'invalid-pipe-key');
-    }
-    if (
-      canonical['principal-1'] !== pipeKey['principal-1'] ||
-      canonical['principal-2'] !== pipeKey['principal-2']
-    ) {
-      throw new ReservoirError(402, 'pipeKey principals must be canonical', 'non-canonical-pipe-key');
-    }
+    const contractId = parsed.contractId;
+    const pipeKey = parsed.pipeKey;
     if (
       pipeKey['principal-1'] !== this.serverAddress &&
       pipeKey['principal-2'] !== this.serverAddress
@@ -539,15 +857,14 @@ export class ReservoirService {
 
     const forPrincipal = typeof proof['forPrincipal'] === 'string' ? proof['forPrincipal'] : '';
     const withPrincipal = typeof proof['withPrincipal'] === 'string' ? proof['withPrincipal'] : '';
-    const myBalance = typeof proof['myBalance'] === 'string' ? proof['myBalance'] : String(proof['myBalance'] ?? '');
-    const theirBalance = typeof proof['theirBalance'] === 'string' ? proof['theirBalance'] : String(proof['theirBalance'] ?? '');
-    const nonce = String(proof['nonce'] ?? '');
-    const action = String(proof['action'] ?? '1');
-    const actor = typeof proof['actor'] === 'string' ? proof['actor'] : '';
-    const rawHashedSecret = typeof proof['hashedSecret'] === 'string' ? proof['hashedSecret'] : null;
-    const hashedSecret = rawHashedSecret ? normalizeHex32(rawHashedSecret) : null;
-    const theirSignature = typeof proof['theirSignature'] === 'string' ? proof['theirSignature'] : '';
-    const validAfter = typeof proof['validAfter'] === 'string' ? proof['validAfter'] : null;
+    const myBalance = parsed.myBalance;
+    const theirBalance = parsed.theirBalance;
+    const nonce = parsed.nonce;
+    const action = parsed.action;
+    const actor = parsed.actor;
+    const hashedSecret = parsed.hashedSecret;
+    const theirSignature = parsed.theirSignature ?? '';
+    const validAfter = parsed.validAfter;
 
     if (!contractId) {
       throw new ReservoirError(400, 'payment proof missing contractId', 'missing-contract-id');
@@ -616,8 +933,8 @@ export class ReservoirService {
       validAfter,
     };
 
-    const pipeId = this.buildPipeId(contractId, pipeKey);
-    const existing = this.getPipeRow(pipeId);
+    const pipeId = parsed.pipeId;
+    const existing = this.getLatestPipeState(pipeId);
 
     let incomingAmount: bigint;
     if (existing) {
@@ -689,8 +1006,8 @@ export class ReservoirService {
       throw new ReservoirError(402, 'invalid payment signature', 'invalid-signature');
     }
 
-    // Update local pipe state
-    this.upsertPipe(
+    // Track this as a pending state until the HTLC secret is revealed.
+    this.upsertPendingState(
       pipeId, contractId, pipeKey,
       myBalance,            // server's new balance
       theirBalance,         // sender's new balance
@@ -709,6 +1026,27 @@ export class ReservoirService {
       incomingAmount: incomingAmount.toString(),
       senderAddress: withPrincipal,
     };
+  }
+
+  async recordCompletedIncomingPayment(args: { paymentProof: string; secret: string }): Promise<void> {
+    const parsed = this.parseIncomingPaymentProof(args.paymentProof);
+    this.upsertPipe(
+      parsed.pipeId,
+      parsed.contractId,
+      parsed.pipeKey,
+      parsed.myBalance,
+      parsed.theirBalance,
+      parsed.nonce,
+      {
+        action: parsed.action,
+        actor: parsed.actor || null,
+        hashedSecret: parsed.hashedSecret,
+        validAfter: parsed.validAfter,
+        counterpartySignature: parsed.theirSignature,
+        enforceableSecret: args.secret,
+      },
+    );
+    this.deletePendingStatesAtOrBelowNonce(parsed.pipeId, parsed.nonce);
   }
 
   /**
@@ -732,7 +1070,7 @@ export class ReservoirService {
 
     // Find the latest canonical pipe for server↔recipient, regardless of token.
     const principals = canonicalPipePrincipals(this.serverAddress, args.recipientAddr);
-    const matchingPipe = this.getLatestPipeRowForPrincipals(
+    const matchingPipe = this.getLatestPipeStateForPrincipals(
       args.contractId,
       principals['principal-1'],
       principals['principal-2'],
@@ -795,7 +1133,7 @@ export class ReservoirService {
       };
 
       // Update pipe state (HTLC locked — balance committed but not yet final)
-      this.upsertPipe(
+      this.upsertPendingState(
         matchingPipe.pipe_id, args.contractId, storedPipeKey,
         nextServerBalance,
         nextRecipientBalance,

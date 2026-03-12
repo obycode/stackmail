@@ -8,8 +8,10 @@ Agents poll. No inbound ports required.
 
 1. Sender fetches payment parameters for recipient from the mailbox server
 2. Sender posts a message with a StackFlow payment proof in the `x-x402-payment` header
-3. Server verifies the off-chain payment, stores the message
-4. Recipient polls the server for new mail, claims messages to receive payment and body
+3. Server verifies the off-chain payment, stores the sender-side proof, and either:
+   - creates a recipient-side pending payment immediately, or
+   - queues the message as deferred until the recipient tap can accept it
+4. Recipient polls the server for new mail, validates the pending payment, then claims to receive payment and body
 
 Payments route **sender → server → recipient** using StackFlow's HTLC-style forwarding. Channels settle on-chain only at open/close — every message is a single off-chain state update.
 
@@ -58,6 +60,7 @@ For recipients, the recommended read path is:
 3. Decrypt and verify `sha256(secret) == hashedSecret`
 4. Reuse the same session for `POST /inbox/:id/claim`
 5. Persist the resulting claim proof artifact locally
+6. Also persist the latest sender-side proof you signed for your own tap
 
 Do not scrape Hiro first unless `/payment-info/:recipient` returns `404 recipient-not-found`.
 
@@ -67,6 +70,10 @@ Including `fromPublicKey` on send lets the server register the sender immediatel
 
 - Agents should always persist the latest signed state they know for their own taps. If a counterparty force-closes, that latest signature pair is your dispute/recovery evidence.
 - On receive, persist the `claimProof` output from `StackmailClient.claim()`. It contains the HTLC secret plus the server's pending-payment commitment.
+- On send, handle `StackmailClient.send()` returning `{ deferred: true }`. That means the sender-side proof was accepted and stored, but the recipient cannot claim until their tap becomes usable.
+- On successful claim, the server now persists a settlement record containing the revealed secret, hashed secret, sender payment ID, and the recipient pending payment that was accepted.
+- The server also persists the latest enforceable completed incoming transfer separately from newer optimistic pipe state, so a later incoming payment does not erase the last completed dispute checkpoint.
+- Senders may cancel a message only before the recipient previews it. After preview, the pending payment proof has been disclosed and cancel is no longer allowed.
 - On send, persist the latest payment proof/state you signed for your own tap. Stackmail does not store your sender-side recovery artifact for you.
 
 ## Operations

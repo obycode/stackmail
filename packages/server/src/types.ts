@@ -41,6 +41,9 @@ export interface PendingPayment {
   hashedSecret: string;
 }
 
+export type MessageDeliveryState = 'ready' | 'previewed' | 'deferred' | 'settled' | 'cancelled';
+export type DeferredReason = 'no-recipient-tap' | 'insufficient-recipient-liquidity';
+
 /** Inbox listing entry — no body, no secret */
 export interface InboxEntry {
   id: string;
@@ -78,9 +81,24 @@ export interface StoredMessage {
   encryptedPayload: EncryptedMail;
   /** Server's signed outgoing state update to recipient, created at receipt time */
   pendingPayment: PendingPayment | null;
+  deliveryState: MessageDeliveryState;
+  deferredReason?: DeferredReason;
+  deferredUntil?: number;
+  previewedAt?: number;
+  cancelledAt?: number;
   claimed: boolean;
   claimedAt?: number;
   paymentSettled: boolean;
+}
+
+export interface SettlementRecord {
+  messageId: string;
+  paymentId: string;
+  recipientAddr: string;
+  hashedSecret: string;
+  secret: string;
+  pendingPayment: PendingPayment | null;
+  settledAt: number;
 }
 
 export interface InboxQuery {
@@ -117,6 +135,14 @@ export interface Config {
   maxPendingPerSender: number;
   /** Max total unclaimed messages allowed for a single recipient inbox */
   maxPendingPerRecipient: number;
+  /** Max deferred sender-paid messages allowed from a single sender to one recipient */
+  maxDeferredPerSender: number;
+  /** Max deferred sender-paid messages queued for a single recipient */
+  maxDeferredPerRecipient: number;
+  /** Max total deferred sender-paid messages queued on this server */
+  maxDeferredGlobal: number;
+  /** How long deferred sender-paid messages remain retryable */
+  deferredMessageTtlMs: number;
   inboxSessionTtlMs: number;
 }
 
@@ -141,6 +167,10 @@ export function loadConfig(): Config {
     minFeeSats: process.env.STACKMAIL_MIN_FEE_SATS ?? '100',
     maxPendingPerSender: parseInt(process.env.STACKMAIL_MAX_PENDING_PER_SENDER ?? '5', 10),
     maxPendingPerRecipient: parseInt(process.env.STACKMAIL_MAX_PENDING_PER_RECIPIENT ?? '20', 10),
+    maxDeferredPerSender: parseInt(process.env.STACKMAIL_MAX_DEFERRED_PER_SENDER ?? '5', 10),
+    maxDeferredPerRecipient: parseInt(process.env.STACKMAIL_MAX_DEFERRED_PER_RECIPIENT ?? '20', 10),
+    maxDeferredGlobal: parseInt(process.env.STACKMAIL_MAX_DEFERRED_GLOBAL ?? '200', 10),
+    deferredMessageTtlMs: parseInt(process.env.STACKMAIL_DEFERRED_MESSAGE_TTL_MS ?? '86400000', 10),
     inboxSessionTtlMs: parseInt(process.env.STACKMAIL_INBOX_SESSION_TTL_MS ?? '300000', 10),
   };
 }

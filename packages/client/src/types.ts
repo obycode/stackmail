@@ -93,6 +93,12 @@ export interface SendOptions {
   serverUrl?: string;
 }
 
+export interface SendResult {
+  messageId: string;
+  deferred: boolean;
+  deferredReason?: 'no-recipient-tap' | 'insufficient-recipient-liquidity';
+}
+
 export interface PollResult {
   inbox: InboxEntry[];
   claimed: DecryptedMessage[];

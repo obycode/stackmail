@@ -18,7 +18,8 @@ function makeMessage(overrides: Partial<StoredMessage> = {}): StoredMessage {
     paymentId: 'pay-' + randomUUID(),
     hashedSecret: 'abc123hashedsecret',
     encryptedPayload: { v: 1, epk: 'aa'.repeat(33), iv: 'bb'.repeat(12), data: 'cc'.repeat(48) },
-    pendingPayment: null,
+    pendingPayment: { stateProof: { nonce: 1, sig: 'abc' }, amount: '900', hashedSecret: 'abc123hashedsecret' },
+    deliveryState: 'ready',
     claimed: false,
     paymentSettled: false,
     ...overrides,
@@ -94,10 +95,11 @@ describe('SqliteMessageStore', () => {
     it('null pendingPayment round-trips', async () => {
       const store = makeStore();
       await store.init();
-      const msg = makeMessage({ pendingPayment: null });
+      const msg = makeMessage({ pendingPayment: null, deliveryState: 'deferred', deferredReason: 'no-recipient-tap' });
       await store.saveMessage(msg);
       const retrieved = await store.getMessage(msg.id, msg.to);
       expect(retrieved?.pendingPayment).toBeNull();
+      expect(retrieved?.deliveryState).toBe('deferred');
     });
 
     it('getInbox returns messages for recipient only', async () => {
@@ -133,6 +135,22 @@ describe('SqliteMessageStore', () => {
       for (let i = 0; i < 5; i++) await store.saveMessage(makeMessage({ to: 'SP1ALICE' }));
       const inbox = await store.getInbox('SP1ALICE', { limit: 3 });
       expect(inbox).toHaveLength(3);
+    });
+
+    it('marks a message previewed and excludes cancelled messages from inbox', async () => {
+      const store = makeStore();
+      await store.init();
+      const previewed = makeMessage({ to: 'SP1ALICE' });
+      const cancelled = makeMessage({ to: 'SP1ALICE' });
+      await store.saveMessage(previewed);
+      await store.saveMessage(cancelled);
+      const previewedRow = await store.markMessagePreviewed(previewed.id, 'SP1ALICE', Date.now());
+      expect(previewedRow?.deliveryState).toBe('previewed');
+      const cancelledRow = await store.cancelMessageBySender(cancelled.id, cancelled.from, Date.now());
+      expect(cancelledRow?.deliveryState).toBe('cancelled');
+      const inbox = await store.getInbox('SP1ALICE', {});
+      expect(inbox.map(m => m.id)).toContain(previewed.id);
+      expect(inbox.map(m => m.id)).not.toContain(cancelled.id);
     });
 
     it('claims a message and marks it claimed', async () => {
@@ -190,6 +208,49 @@ describe('SqliteMessageStore', () => {
       await expect(store.markPaymentSettled(msg.paymentId)).resolves.toBeUndefined();
     });
 
+    it('records settlement artifacts', async () => {
+      const store = makeStore();
+      await store.init();
+      const msg = makeMessage();
+      await store.saveMessage(msg);
+      await store.claimMessage(msg.id, msg.to);
+      await store.recordSettlement({
+        messageId: msg.id,
+        paymentId: msg.paymentId,
+        recipientAddr: msg.to,
+        hashedSecret: msg.hashedSecret,
+        secret: '11'.repeat(32),
+        pendingPayment: msg.pendingPayment,
+        settledAt: Date.now(),
+      });
+      const settlement = await store.getSettlement(msg.id);
+      expect(settlement?.messageId).toBe(msg.id);
+      expect(settlement?.paymentId).toBe(msg.paymentId);
+      expect(settlement?.secret).toBe('11'.repeat(32));
+    });
+
+    it('activates deferred messages when pending payment becomes available', async () => {
+      const store = makeStore();
+      await store.init();
+      const msg = makeMessage({
+        pendingPayment: null,
+        deliveryState: 'deferred',
+        deferredReason: 'insufficient-recipient-liquidity',
+        deferredUntil: Date.now() + 60_000,
+      });
+      await store.saveMessage(msg);
+      expect((await store.getInbox(msg.to, {})).length).toBe(0);
+      await store.activateDeferredMessage(msg.id, msg.to, {
+        stateProof: { nonce: 2, sig: 'def' },
+        amount: '900',
+        hashedSecret: msg.hashedSecret,
+      });
+      const retrieved = await store.getMessage(msg.id, msg.to);
+      expect(retrieved?.deliveryState).toBe('ready');
+      expect(retrieved?.pendingPayment?.amount).toBe('900');
+      expect((await store.getInbox(msg.to, {})).length).toBe(1);
+    });
+
     it('counts pending messages per sender and per recipient', async () => {
       const store = makeStore();
       await store.init();
@@ -205,6 +266,38 @@ describe('SqliteMessageStore', () => {
 
       expect(await store.countPendingFromSender('SP1SENDER1', 'SP1ALICE')).toBe(1);
       expect(await store.countPendingToRecipient('SP1ALICE')).toBe(2);
+    });
+
+    it('counts deferred messages separately', async () => {
+      const store = makeStore();
+      await store.init();
+      await store.saveMessage(makeMessage({
+        from: 'SP1SENDER1',
+        to: 'SP1ALICE',
+        pendingPayment: null,
+        deliveryState: 'deferred',
+        deferredReason: 'no-recipient-tap',
+        deferredUntil: Date.now() + 60_000,
+      }));
+      await store.saveMessage(makeMessage({
+        from: 'SP1SENDER1',
+        to: 'SP1ALICE',
+        pendingPayment: null,
+        deliveryState: 'deferred',
+        deferredReason: 'insufficient-recipient-liquidity',
+        deferredUntil: Date.now() + 60_000,
+      }));
+      await store.saveMessage(makeMessage({
+        from: 'SP1SENDER2',
+        to: 'SP1BOB',
+        pendingPayment: null,
+        deliveryState: 'deferred',
+        deferredReason: 'no-recipient-tap',
+        deferredUntil: Date.now() + 60_000,
+      }));
+      expect(await store.countDeferredFromSender('SP1SENDER1', 'SP1ALICE')).toBe(2);
+      expect(await store.countDeferredToRecipient('SP1ALICE')).toBe(2);
+      expect(await store.countDeferredGlobal()).toBe(3);
     });
   });
 

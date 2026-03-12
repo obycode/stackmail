@@ -32,6 +32,7 @@ import type {
   PendingPayment,
   PollResult,
   SendOptions,
+  SendResult,
 } from './types.js';
 
 export class StackmailError extends Error {
@@ -62,7 +63,7 @@ export class StackmailClient {
    * Send a message to a recipient. Handles all payment and encryption internally.
    * Returns the server-assigned message ID.
    */
-  async send(opts: SendOptions): Promise<{ messageId: string }> {
+  async send(opts: SendOptions): Promise<SendResult> {
     const serverUrl = opts.serverUrl ?? this.config.serverUrl;
 
     // 1. Get server config (address, price)
@@ -114,7 +115,13 @@ export class StackmailClient {
       throw new StackmailError(res.status, String(body['error'] ?? 'send-failed'), body);
     }
 
-    return { messageId: String(body['messageId'] ?? '') };
+    return {
+      messageId: String(body['messageId'] ?? ''),
+      deferred: Boolean(body['deferred']),
+      deferredReason: typeof body['reason'] === 'string'
+        ? body['reason'] as SendResult['deferredReason']
+        : undefined,
+    };
   }
 
   // ─── Receive ──────────────────────────────────────────────────────────────

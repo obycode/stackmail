@@ -142,6 +142,21 @@ function getRuntimeReservoirContract(): string {
   return RESERVOIR;
 }
 
+function getReservoirDeployerAddress(): string | null {
+  const [deployer] = getRuntimeReservoirContract().split('.');
+  return /^S[PT][0-9A-Z]{39}$/.test(deployer) ? deployer : null;
+}
+
+function connectedUserIsReservoirAdmin(): boolean {
+  return walletAddress != null && walletAddress === getReservoirDeployerAddress();
+}
+
+function updateAdminSectionVisibility(): void {
+  const section = document.getElementById('admin-section') as HTMLElement | null;
+  if (!section) return;
+  section.style.display = connectedUserIsReservoirAdmin() ? '' : 'none';
+}
+
 function hasSupportedTokenResolved(): boolean {
   return Object.prototype.hasOwnProperty.call(serverStatus, 'supportedToken');
 }
@@ -448,6 +463,12 @@ let walletAddress: string | null = null;
 let walletPubkey: string | null  = null;
 let serverStatus: Record<string, unknown> = {};
 let pipeState = { myBalance: 0n, serverBalance: 0n, nonce: 0n };
+let pipeBalanceBreakdown = {
+  settledMyBalance: null as bigint | null,
+  settledServerBalance: null as bigint | null,
+  pendingMyBalance: null as bigint | null,
+  pendingServerBalance: null as bigint | null,
+};
 let inboxDecryptPrivateKey: string | null = null;
 let walletCryptoAvailable = false;
 let lastInboxMessages: InboxMessage[] = [];
@@ -687,6 +708,12 @@ function disconnectWallet(): void {
   walletPubkey  = null;
   walletCryptoAvailable = false;
   pipeState     = { myBalance: 0n, serverBalance: 0n, nonce: 0n };
+  pipeBalanceBreakdown = {
+    settledMyBalance: null,
+    settledServerBalance: null,
+    pendingMyBalance: null,
+    pendingServerBalance: null,
+  };
   lastInboxMessages = [];
   inboxActionMessageId = null;
   cachedGetInboxAuth = null;
@@ -696,6 +723,7 @@ function disconnectWallet(): void {
   for (const key of Object.keys(openedInboxMessages)) delete openedInboxMessages[key];
   for (const key of Object.keys(inboxMessageErrors)) delete inboxMessageErrors[key];
   updateWalletUI();
+  updateAdminSectionVisibility();
   clearDecryptKey();
   setAppState('no-wallet');
 }
@@ -739,6 +767,12 @@ async function onWalletConnected(): Promise<void> {
     setAppState('no-tap');
   } else {
     pipeState = { myBalance: tap.userBalance, serverBalance: tap.reservoirBalance, nonce: tap.nonce };
+    pipeBalanceBreakdown = {
+      settledMyBalance: tap.settledUserBalance,
+      settledServerBalance: tap.settledReservoirBalance,
+      pendingMyBalance: tap.pendingUserBalance,
+      pendingServerBalance: tap.pendingReservoirBalance,
+    };
     updateIdentityUI();
     setAppState('ready');
     showTab('inbox');
@@ -886,6 +920,10 @@ async function signStructuredMessageWithWallet(
 interface TapState {
   userBalance: bigint;
   reservoirBalance: bigint;
+  settledUserBalance: bigint | null;
+  settledReservoirBalance: bigint | null;
+  pendingUserBalance: bigint | null;
+  pendingReservoirBalance: bigint | null;
   nonce: bigint;
   pipeKey: PipeKey;
 }
@@ -898,6 +936,12 @@ interface TrackedTapResponse {
     pipeKey?: PipeKey;
     serverBalance?: string;
     myBalance?: string;
+    sendCapacity?: string;
+    receiveLiquidity?: string;
+    settledServerBalance?: string;
+    settledMyBalance?: string;
+    pendingServerBalance?: string;
+    pendingMyBalance?: string;
     nonce?: string;
   } | null;
 }
@@ -1014,6 +1058,10 @@ async function queryOnChainTap(userAddr: string): Promise<TapState | null> {
     return {
       userBalance:      userIsP1 ? parsed.balance1 + parsed.pending1 : parsed.balance2 + parsed.pending2,
       reservoirBalance: userIsP1 ? parsed.balance2 + parsed.pending2 : parsed.balance1 + parsed.pending1,
+      settledUserBalance: userIsP1 ? parsed.balance1 : parsed.balance2,
+      settledReservoirBalance: userIsP1 ? parsed.balance2 : parsed.balance1,
+      pendingUserBalance: userIsP1 ? parsed.pending1 : parsed.pending2,
+      pendingReservoirBalance: userIsP1 ? parsed.pending2 : parsed.pending1,
       nonce: parsed.nonce,
       pipeKey,
     };
@@ -1033,8 +1081,12 @@ async function queryTrackedTapState(userAddr: string): Promise<TapState | null> 
       return null;
     }
     return {
-      userBalance: BigInt(data.tap.myBalance),
-      reservoirBalance: BigInt(data.tap.serverBalance),
+      userBalance: BigInt(data.tap.sendCapacity ?? data.tap.myBalance),
+      reservoirBalance: BigInt(data.tap.receiveLiquidity ?? data.tap.serverBalance),
+      settledUserBalance: data.tap.settledMyBalance != null ? BigInt(data.tap.settledMyBalance) : null,
+      settledReservoirBalance: data.tap.settledServerBalance != null ? BigInt(data.tap.settledServerBalance) : null,
+      pendingUserBalance: data.tap.pendingMyBalance != null ? BigInt(data.tap.pendingMyBalance) : null,
+      pendingReservoirBalance: data.tap.pendingServerBalance != null ? BigInt(data.tap.pendingServerBalance) : null,
       nonce: BigInt(data.tap.nonce),
       pipeKey: data.tap.pipeKey,
     };
@@ -1196,6 +1248,12 @@ async function checkTapAfterTx(): Promise<void> {
   const tap = await resolveTapState(walletAddress!);
   if (tap) {
     pipeState = { myBalance: tap.userBalance, serverBalance: tap.reservoirBalance, nonce: tap.nonce };
+    pipeBalanceBreakdown = {
+      settledMyBalance: tap.settledUserBalance,
+      settledServerBalance: tap.settledReservoirBalance,
+      pendingMyBalance: tap.pendingUserBalance,
+      pendingServerBalance: tap.pendingReservoirBalance,
+    };
     updateIdentityUI();
     setAppState('ready');
     showTab('inbox');
@@ -1632,12 +1690,24 @@ async function fetchRecipientInfo(toAddr: string): Promise<void> {
     const tap = await resolveTapState(walletAddress!);
     if (tap) {
       pipeState = { myBalance: tap.userBalance, serverBalance: tap.reservoirBalance, nonce: tap.nonce };
+      pipeBalanceBreakdown = {
+        settledMyBalance: tap.settledUserBalance,
+        settledServerBalance: tap.settledReservoirBalance,
+        pendingMyBalance: tap.pendingUserBalance,
+        pendingServerBalance: tap.pendingReservoirBalance,
+      };
       (document.getElementById('pay-balance') as HTMLElement).textContent = formatPaymentAmount(pipeState.myBalance);
       (document.getElementById('pay-nonce') as HTMLElement).textContent   = `${pipeState.nonce}`;
       (document.getElementById('tap-status') as HTMLElement).innerHTML =
         `<span style="color:var(--green)">✓ Channel open — ${escHtml(formatPaymentAmount(pipeState.myBalance))} available</span>`;
       (document.getElementById('send-btn') as HTMLButtonElement).disabled = pipeState.myBalance < BigInt(String(recipientInfo.amount));
     } else {
+      pipeBalanceBreakdown = {
+        settledMyBalance: null,
+        settledServerBalance: null,
+        pendingMyBalance: null,
+        pendingServerBalance: null,
+      };
       (document.getElementById('tap-status') as HTMLElement).innerHTML =
         `<span style="color:var(--red)">✗ No channel found on-chain</span>`;
       (document.getElementById('send-btn') as HTMLButtonElement).disabled = true;
@@ -1739,7 +1809,13 @@ async function sendMessage(): Promise<void> {
       body: JSON.stringify({ from: senderAddr, fromPublicKey: walletPubkey, encryptedPayload }),
     });
 
-    const data = await r.json().catch(() => ({})) as { messageId?: string; message?: string; error?: string };
+    const data = await r.json().catch(() => ({})) as {
+      messageId?: string;
+      message?: string;
+      error?: string;
+      deferred?: boolean;
+      reason?: string;
+    };
     if (!r.ok) throw new Error(data.message || data.error || `Send failed: ${r.status}`);
 
     // Commit state
@@ -1747,7 +1823,14 @@ async function sendMessage(): Promise<void> {
     (document.getElementById('pay-balance') as HTMLElement).textContent = formatPaymentAmount(pipeState.myBalance);
     (document.getElementById('pay-nonce') as HTMLElement).textContent   = `${pipeState.nonce}`;
 
-    statusEl.innerHTML = `
+    statusEl.innerHTML = data.deferred
+      ? `
+      <div class="alert alert-warning">
+        Message accepted and queued.<br>
+        Recipient still needs tap capacity before it can be claimed.<br>
+        <span class="mono" style="font-size:11px">ID: ${escHtml(data.messageId || '—')} · ${escHtml(data.reason || 'deferred')}</span>
+      </div>`
+      : `
       <div class="alert alert-success">
         ✓ Message sent!<br>
         <span class="mono" style="font-size:11px">ID: ${escHtml(data.messageId || '—')}</span>
@@ -1793,6 +1876,7 @@ async function loadStatus(): Promise<void> {
       // Keep status usable even if token lookup temporarily fails.
     }
     serverStatus = data;
+    updateAdminSectionVisibility();
     dot.className    = data.ok ? 'dot green' : 'dot red';
     label.textContent = data.ok ? 'Stackmail Server — Online' : 'Server returned error';
     (document.getElementById('s-addr') as HTMLElement).textContent     = String(data.serverAddress || '—');
@@ -1823,10 +1907,15 @@ function updateIdentityUI(): void {
   if (el) el.textContent = addr;
   if (pk) pk.textContent = pub;
   if (ia) ia.textContent = addr;
+  updateAdminSectionVisibility();
 
   const tapEl = document.getElementById('status-tap-info');
   if (!tapEl) return;
   if (pipeState.nonce > 0n || pipeState.myBalance > 0n) {
+    const settledMy = pipeBalanceBreakdown.settledMyBalance;
+    const settledServer = pipeBalanceBreakdown.settledServerBalance;
+    const pendingMy = pipeBalanceBreakdown.pendingMyBalance;
+    const pendingServer = pipeBalanceBreakdown.pendingServerBalance;
     tapEl.innerHTML = `
       <div style="font-size:11px;color:var(--muted);margin-top:4px;margin-bottom:8px">
         Effective liquidity shown below includes pending channel balance when available.
@@ -1844,7 +1933,18 @@ function updateIdentityUI(): void {
           <div style="font-size:11px;color:var(--muted);text-transform:uppercase;margin-bottom:2px">Nonce</div>
           <div style="font-size:15px;color:var(--text)">${pipeState.nonce}</div>
         </div>
-      </div>`;
+      </div>
+      ${settledMy != null || settledServer != null || pendingMy != null || pendingServer != null ? `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+        <div>
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;margin-bottom:2px">Your settled / pending</div>
+          <div style="font-size:13px;color:var(--text)">${escHtml(formatPaymentAmount(settledMy ?? 0n))} / ${escHtml(formatPaymentAmount(pendingMy ?? 0n))}</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;margin-bottom:2px">Reservoir settled / pending</div>
+          <div style="font-size:13px;color:var(--text)">${escHtml(formatPaymentAmount(settledServer ?? 0n))} / ${escHtml(formatPaymentAmount(pendingServer ?? 0n))}</div>
+        </div>
+      </div>` : ''}`;
   } else {
     tapEl.textContent = 'No channel state loaded.';
   }
@@ -1857,6 +1957,10 @@ async function setBorrowRate(): Promise<void> {
 
   if (!walletAddress) {
     statusEl.innerHTML = '<div class="alert alert-warning">Connect wallet first.</div>';
+    return;
+  }
+  if (!connectedUserIsReservoirAdmin()) {
+    statusEl.innerHTML = '<div class="alert alert-warning">Only the reservoir deployer can use this control.</div>';
     return;
   }
 
@@ -1919,6 +2023,10 @@ async function setReservoirAgent(): Promise<void> {
 
   if (!walletAddress) {
     statusEl.innerHTML = '<div class="alert alert-warning">Connect wallet first.</div>';
+    return;
+  }
+  if (!connectedUserIsReservoirAdmin()) {
+    statusEl.innerHTML = '<div class="alert alert-warning">Only the reservoir deployer can use this control.</div>';
     return;
   }
 
