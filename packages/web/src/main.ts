@@ -634,11 +634,16 @@ function updateDecryptCliHelp(): void {
     'curl -fsSL https://raw.githubusercontent.com/warmidris/stackmail/main/scripts/install-cli.sh | sh',
     'export STACKMAIL_PRIVATE_KEY=<your-private-key>',
     '',
-    'Use:',
+    'Open your inbox:',
     `STACKMAIL_SERVER_URL=${serverUrl} stackmail inbox`,
-    `STACKMAIL_SERVER_URL=${serverUrl} stackmail compose`,
+    '',
+    'Read a specific message:',
     `STACKMAIL_SERVER_URL=${serverUrl} stackmail read <message-id>`,
   ].join('\n');
+}
+
+function cliReadCommand(messageId: string): string {
+  return `STACKMAIL_SERVER_URL=${window.location.origin} stackmail read ${messageId}`;
 }
 
 function updateDecryptKeyUI(): void {
@@ -2005,6 +2010,9 @@ function renderInboxMessages(messages: InboxMessage[]): void {
       ? `<button class="btn btn-secondary btn-sm" data-action="open-message" data-message-id="${escHtml(msg.id)}" ${decryptReady ? '' : 'disabled'}>${isBusy ? '<span class="spinner"></span> Opening…' : 'Open'}</button>
          <button class="btn btn-secondary btn-sm" data-action="reply-message" data-message-id="${escHtml(msg.id)}">Reply</button>`
       : `<button class="btn btn-primary btn-sm" data-action="claim-message" data-message-id="${escHtml(msg.id)}" ${decryptReady ? '' : 'disabled'}>${isBusy ? '<span class="spinner"></span> Claiming…' : 'Claim & Open'}</button>`;
+    const cliActionHtml = !walletCryptoAvailable
+      ? `<button class="btn btn-secondary btn-sm" data-action="copy-cli-read" data-message-id="${escHtml(msg.id)}">Copy CLI Read</button>`
+      : '';
     const decryptHint = walletCryptoAvailable
       ? '<span style="color:var(--muted)">Leather can decrypt this message with the connected wallet.</span>'
       : decryptReady
@@ -2033,6 +2041,7 @@ function renderInboxMessages(messages: InboxMessage[]): void {
       </div>
       <div class="row" style="margin-top:10px">
         ${actionHtml}
+        ${cliActionHtml}
       </div>
       ${messageError ? `<div class="alert alert-error" style="margin-top:10px">${escHtml(messageError)}</div>` : ''}
       ${opened ? `
@@ -2809,6 +2818,13 @@ document.getElementById('inbox-list')!.addEventListener('click', async (event) =
   }
   if (action === 'reply-message') {
     await replyToMessage(messageId);
+    return;
+  }
+  if (action === 'copy-cli-read') {
+    const ok = await copyToClipboard(cliReadCommand(messageId));
+    const original = button.textContent ?? 'Copy CLI Read';
+    button.textContent = ok ? 'Copied!' : 'Copy failed';
+    setTimeout(() => { button.textContent = original; }, 1500);
   }
 });
 
