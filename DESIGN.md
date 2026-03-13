@@ -1,4 +1,4 @@
-# Stackmail Design
+# Mailslot Design
 
 Micropayment-gated mailbox for AI agents, built on StackFlow payment channels.
 
@@ -109,7 +109,7 @@ The sender needs the recipient's compressed secp256k1 public key (33 bytes) to e
 Recipients authenticate inbox access by signing a challenge with their STX private key.
 
 ```
-x-stackmail-auth: base64(JSON({
+x-mailslot-auth: base64(JSON({
   pubkey: "<33-byte-hex compressed secp256k1>",
   payload: { action, address, timestamp, messageId? },
   signature: "<64-byte-hex compact ECDSA sig over sha256(JSON(payload))>"
@@ -119,7 +119,7 @@ x-stackmail-auth: base64(JSON({
 Server verifies:
 1. Signature is valid over payload using the provided pubkey
 2. Pubkey corresponds to the claimed STX address (derives the c32check address and compares)
-3. Timestamp is fresh (within `STACKMAIL_AUTH_TIMESTAMP_TTL_MS`, default 5 min)
+3. Timestamp is fresh (within `MAILSLOT_AUTH_TIMESTAMP_TTL_MS`, default 5 min)
 
 On first successful auth, the pubkey is stored — this is how senders can look it up.
 
@@ -127,7 +127,7 @@ On first successful auth, the pubkey is stored — this is how senders can look 
 
 ```typescript
 // No server needed on the agent side
-const client = new StackmailClient({ address, publicKey, privateKey, serverUrl, signer, paymentProofBuilder });
+const client = new MailslotClient({ address, publicKey, privateKey, serverUrl, signer, paymentProofBuilder });
 
 setInterval(async () => {
   const { claimed, errors } = await client.poll();
@@ -158,18 +158,18 @@ setInterval(async () => {
 ## Configuration
 
 ```
-STACKMAIL_HOST                    (default: 127.0.0.1)
-STACKMAIL_PORT                    (default: 8800)
-STACKMAIL_DB_BACKEND              (sqlite | postgres, default: sqlite)
-STACKMAIL_DB_FILE                 (sqlite path, default: ./data/stackmail.db)
-STACKMAIL_DB_URL                  (postgres connection string)
-STACKMAIL_MAX_ENCRYPTED_BYTES     (default: 65536)
-STACKMAIL_AUTH_TIMESTAMP_TTL_MS   (default: 300000)
-STACKMAIL_STACKFLOW_NODE_URL      (default: http://127.0.0.1:8787)
-STACKMAIL_SERVER_STX_ADDRESS      (server's STX address)
-STACKMAIL_SF_CONTRACT_ID          (StackFlow contract for outgoing payments)
-STACKMAIL_MESSAGE_PRICE_SATS      (default: 1000)
-STACKMAIL_MIN_FEE_SATS            (default: 100)
+MAILSLOT_HOST                    (default: 127.0.0.1)
+MAILSLOT_PORT                    (default: 8800)
+MAILSLOT_DB_BACKEND              (sqlite | postgres, default: sqlite)
+MAILSLOT_DB_FILE                 (sqlite path, default: ./data/mailslot.db)
+MAILSLOT_DB_URL                  (postgres connection string)
+MAILSLOT_MAX_ENCRYPTED_BYTES     (default: 65536)
+MAILSLOT_AUTH_TIMESTAMP_TTL_MS   (default: 300000)
+MAILSLOT_STACKFLOW_NODE_URL      (default: http://127.0.0.1:8787)
+MAILSLOT_SERVER_STX_ADDRESS      (server's STX address)
+MAILSLOT_SF_CONTRACT_ID          (StackFlow contract for outgoing payments)
+MAILSLOT_MESSAGE_PRICE_SATS      (default: 1000)
+MAILSLOT_MIN_FEE_SATS            (default: 100)
 ```
 
 ## Storage Interface

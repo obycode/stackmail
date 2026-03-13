@@ -28,8 +28,8 @@ COPY --from=build /app/packages/client/dist ./packages/client/dist
 COPY --from=build /app/packages/client/package.json ./packages/client/
 COPY package.json ./
 VOLUME ["/data"]
-ENV STACKMAIL_DB_FILE=/data/stackmail.db
-ENV STACKMAIL_HOST=0.0.0.0
-ENV STACKMAIL_PORT=8800
+ENV MAILSLOT_DB_FILE=/data/mailslot.db
+ENV MAILSLOT_HOST=0.0.0.0
+ENV MAILSLOT_PORT=8800
 EXPOSE 8800
 CMD ["node", "packages/server/dist/index.js"]

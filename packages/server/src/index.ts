@@ -1,5 +1,5 @@
 /**
- * Stackmail server — entry point
+ * Mailslot server — entry point
  */
 
 import { secp256k1 } from '@noble/curves/secp256k1';
@@ -44,7 +44,7 @@ function normalizeContractPrincipal(value: string): string | null {
   const normalized = value.trim();
   if (!normalized) return null;
   if (!isContractPrincipal(normalized)) {
-    throw new Error('STACKMAIL_RESERVOIR_CONTRACT_ID must be a valid contract principal');
+    throw new Error('MAILSLOT_RESERVOIR_CONTRACT_ID must be a valid contract principal');
   }
   return normalized;
 }
@@ -124,13 +124,13 @@ function resolveServerIdentity(
 
   const envKeyRaw = config.serverPrivateKey.trim();
   if (envKeyRaw && !normalizePrivateKeyHex(envKeyRaw)) {
-    throw new Error('STACKMAIL_SERVER_PRIVATE_KEY must be a 32-byte hex string');
+    throw new Error('MAILSLOT_SERVER_PRIVATE_KEY must be a 32-byte hex string');
   }
 
   const envAddressRaw = config.serverStxAddress.trim();
   const envAddress = normalizePrincipal(envAddressRaw);
   if (envAddress && !isPrincipal(envAddress)) {
-    throw new Error('STACKMAIL_SERVER_STX_ADDRESS must be a valid STX principal');
+    throw new Error('MAILSLOT_SERVER_STX_ADDRESS must be a valid STX principal');
   }
   const envStandardAddress = envAddress && isStandardPrincipal(envAddress) ? envAddress : null;
   const envLegacyReservoirAddress = envAddress && isContractPrincipal(envAddress) ? envAddress : null;
@@ -184,7 +184,7 @@ async function main(): Promise<void> {
 
   const store = new SqliteMessageStore(config.dbFile);
   await store.init();
-  console.log('stackmail: database ready');
+  console.log('mailslot: database ready');
 
   // Inline reservoir shares the same SQLite DB as the message store
   const { default: Database } = await import('better-sqlite3');
@@ -201,32 +201,32 @@ async function main(): Promise<void> {
 
   if (identity.source === 'generated') {
     console.warn(
-      `stackmail: generated server key and persisted it to DB meta (signer: ${config.serverStxAddress})`,
+      `mailslot: generated server key and persisted it to DB meta (signer: ${config.serverStxAddress})`,
     );
   } else if (identity.source === 'db') {
     console.warn(
-      `stackmail: loaded server key from DB meta (signer: ${config.serverStxAddress})`,
+      `mailslot: loaded server key from DB meta (signer: ${config.serverStxAddress})`,
     );
   }
   if (!envReservoir && identity.legacyReservoirAddress) {
     console.warn(
-      `stackmail: using legacy STACKMAIL_SERVER_STX_ADDRESS contract principal as reservoir (${identity.legacyReservoirAddress}); set STACKMAIL_RESERVOIR_CONTRACT_ID explicitly`,
+      `mailslot: using legacy MAILSLOT_SERVER_STX_ADDRESS contract principal as reservoir (${identity.legacyReservoirAddress}); set MAILSLOT_RESERVOIR_CONTRACT_ID explicitly`,
     );
   }
-  console.log(`stackmail: signer address=${config.serverStxAddress}`);
+  console.log(`mailslot: signer address=${config.serverStxAddress}`);
 
   if (!config.sfContractId && config.reservoirContractId) {
     const discovered = await fetchSfContractFromReservoir(config.reservoirContractId, config.chainId);
     if (discovered) {
       config.sfContractId = discovered;
-      console.log(`stackmail: discovered SF contract from reservoir: ${discovered}`);
+      console.log(`mailslot: discovered SF contract from reservoir: ${discovered}`);
     }
   }
   if (!config.sfContractId) {
-    console.warn('stackmail: STACKMAIL_SF_CONTRACT_ID not set and could not be discovered — outgoing payments disabled');
+    console.warn('mailslot: MAILSLOT_SF_CONTRACT_ID not set and could not be discovered — outgoing payments disabled');
   }
   if (!config.reservoirContractId) {
-    console.warn('stackmail: reservoir contract not configured — tap onboarding disabled');
+    console.warn('mailslot: reservoir contract not configured — tap onboarding disabled');
   }
 
   const runtimeSettings = new RuntimeSettingsStore(reservoirDb, runtimeSettingsFromConfig(config));
@@ -245,8 +245,8 @@ async function main(): Promise<void> {
   const server = createMailServer(config, store, reservoir, runtimeSettings);
 
   server.listen(config.port, config.host, () => {
-    console.log(`stackmail: listening on ${config.host}:${config.port}`);
-    console.log(`stackmail: network=${config.chainId === 1 ? 'mainnet' : 'testnet'}, contract=${config.sfContractId || '(none)'}`);
+    console.log(`mailslot: listening on ${config.host}:${config.port}`);
+    console.log(`mailslot: network=${config.chainId === 1 ? 'mainnet' : 'testnet'}, contract=${config.sfContractId || '(none)'}`);
   });
 }
 

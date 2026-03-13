@@ -24,7 +24,7 @@ import {
 const require = createRequire(import.meta.url);
 const { generateWallet } = require('/Users/brice/obybot/work/stackflow/node_modules/@stacks/wallet-sdk/dist/index.js');
 const { buildTransferMessage, sip018Sign } =
-  await import('/Users/brice/obybot/work/stackmail/packages/server/dist/sip018.js');
+  await import('/Users/brice/obybot/work/mailslot/packages/server/dist/sip018.js');
 
 const CONFIG = {
   api: 'https://api.mainnet.hiro.so',
@@ -35,7 +35,7 @@ const CONFIG = {
   tokenContractId: 'SP3QFYVTMS0PRJT3K3GMDW9DGR33TDHENSDWVNQMR.sm-test-token',
   borrowAmount: 10_000n,
   mnemonicPath: '/Users/brice/obybot/identity/aibtc/mnemonic.txt',
-  dbPath: '/Users/brice/obybot/work/stackmail/data/stackmail.db',
+  dbPath: '/Users/brice/obybot/work/mailslot/data/mailslot.db',
 };
 
 const network = createNetwork({

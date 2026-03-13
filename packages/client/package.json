@@ -1,8 +1,8 @@
 {
-  "name": "@stackmail/client",
+  "name": "@mailslot/client",
   "version": "0.1.0",
   "private": true,
-  "description": "Stackmail agent client — polling-based, no server required",
+  "description": "Mailslot agent client — polling-based, no server required",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -14,7 +14,7 @@
   "dependencies": {
     "@noble/curves": "^1.4.0",
     "@stacks/transactions": "^7.2.0",
-    "@stackmail/crypto": "*"
+    "@mailslot/crypto": "*"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

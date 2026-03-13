@@ -1,4 +1,4 @@
-export { StackmailClient, StackmailError } from './client.js';
+export { MailslotClient, MailslotError } from './client.js';
 export type {
   ClaimProofRecord,
   ClientConfig,
@@ -14,4 +14,4 @@ export type {
 } from './types.js';
 export { verifyPendingPaymentProof } from './sip018.js';
 // Re-export crypto primitives for convenience
-export { encryptMail, decryptMail, hashSecret, verifySecretHash } from '@stackmail/crypto';
+export { encryptMail, decryptMail, hashSecret, verifySecretHash } from '@mailslot/crypto';

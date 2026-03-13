@@ -1,5 +1,5 @@
 /**
- * Stackmail end-to-end test (two synthetic agents, real server, mainnet contracts)
+ * Mailslot end-to-end test (two synthetic agents, real server, mainnet contracts)
  *
  * Tests the server's off-chain logic with valid SIP-018 signatures.
  * Agents interact through the sm-reservoir contract (hub-and-spoke model).
@@ -18,19 +18,19 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto';
-import { secp256k1 } from '/agent/work/stackmail/node_modules/@noble/curves/secp256k1.js';
+import { secp256k1 } from '/agent/work/mailslot/node_modules/@noble/curves/secp256k1.js';
 
 const { buildTransferMessage, sip018Sign, sip018Verify } =
-  await import('/agent/work/stackmail/packages/server/dist/sip018.js');
+  await import('/agent/work/mailslot/packages/server/dist/sip018.js');
 const { encryptMail, decryptMail, hashSecret, verifySecretHash } =
-  await import('/agent/work/stackmail/packages/crypto/dist/index.js');
+  await import('/agent/work/mailslot/packages/crypto/dist/index.js');
 
-const SERVER = process.env.STACKMAIL_SERVER_URL ?? 'http://127.0.0.1:8800';
+const SERVER = process.env.MAILSLOT_SERVER_URL ?? 'http://127.0.0.1:8800';
 // The reservoir contract IS the server's on-chain identity — pipes are opened to it
-const RESERVOIR = process.env.STACKMAIL_RESERVOIR_CONTRACT_ID ?? 'SP3QFYVTMS0PRJT3K3GMDW9DGR33TDHENSDWVNQMR.sm-reservoir';
-const SF_CONTRACT = process.env.STACKMAIL_SF_CONTRACT_ID ?? 'SP3QFYVTMS0PRJT3K3GMDW9DGR33TDHENSDWVNQMR.sm-stackflow';
-const TOKEN = process.env.STACKMAIL_TOKEN_CONTRACT_ID ?? 'SP3QFYVTMS0PRJT3K3GMDW9DGR33TDHENSDWVNQMR.sm-test-token';
-const CHAIN_ID = Number.parseInt(process.env.STACKMAIL_CHAIN_ID ?? '1', 10);
+const RESERVOIR = process.env.MAILSLOT_RESERVOIR_CONTRACT_ID ?? 'SP3QFYVTMS0PRJT3K3GMDW9DGR33TDHENSDWVNQMR.sm-reservoir';
+const SF_CONTRACT = process.env.MAILSLOT_SF_CONTRACT_ID ?? 'SP3QFYVTMS0PRJT3K3GMDW9DGR33TDHENSDWVNQMR.sm-stackflow';
+const TOKEN = process.env.MAILSLOT_TOKEN_CONTRACT_ID ?? 'SP3QFYVTMS0PRJT3K3GMDW9DGR33TDHENSDWVNQMR.sm-test-token';
+const CHAIN_ID = Number.parseInt(process.env.MAILSLOT_CHAIN_ID ?? '1', 10);
 const MESSAGE_PRICE = 1000n;
 
 // ── c32 address helpers ───────────────────────────────────────────────────────
@@ -141,7 +141,7 @@ function assert(condition, msg) {
 // ── Main test ─────────────────────────────────────────────────────────────────
 async function run() {
   console.log('═══════════════════════════════════════════════════════');
-  console.log('  Stackmail E2E Test — reservoir model');
+  console.log('  Mailslot E2E Test — reservoir model');
   console.log('═══════════════════════════════════════════════════════\n');
 
   const alice = genKeypair();
@@ -160,7 +160,7 @@ async function run() {
   // ─── 2. Bob registers mailbox ───────────────────────────────────────────────
   console.log('2. Bob registers mailbox with server (stores pubkey)...');
   const bobAuth = buildAuthHeader(bob.privHex, bob.pubHex, bob.addr, 'get-inbox');
-  const bobInbox = await api('GET', '/inbox', null, { 'x-stackmail-auth': bobAuth });
+  const bobInbox = await api('GET', '/inbox', null, { 'x-mailslot-auth': bobAuth });
   console.log(`   GET /inbox → ${bobInbox.status}`);
   assert(bobInbox.status === 200 || bobInbox.status === 404, `unexpected status ${bobInbox.status}: ${JSON.stringify(bobInbox.data)}`);
 
@@ -180,7 +180,7 @@ async function run() {
   const secretHex     = randomBytes(32).toString('hex');
   const hashedSecret  = hashSecret(secretHex);  // sha256(secret_bytes) hex, no 0x prefix
   const encPayload    = await encryptMail(
-    { v: 1, secret: secretHex, subject: 'Hello from Alice', body: 'First message via Stackmail reservoir model 🚀' },
+    { v: 1, secret: secretHex, subject: 'Hello from Alice', body: 'First message via Mailslot reservoir model 🚀' },
     bobPubkey,
   );
   console.log('   ✓ hashedSecret:', hashedSecret.slice(0, 20) + '...');
@@ -255,7 +255,7 @@ async function run() {
     'POST',
     `/messages/${bob.addr}`,
     { from: alice.addr, encryptedPayload: encPayload },
-    { 'x-stackmail-payment': proofHeader },
+    { 'x-mailslot-payment': proofHeader },
   );
   if (!sendResp.ok) {
     console.error('   Send failed:', sendResp.status, JSON.stringify(sendResp.data));
@@ -268,7 +268,7 @@ async function run() {
   // ─── 7. Bob polls inbox ─────────────────────────────────────────────────────
   console.log('7. Bob polls inbox...');
   const bobAuth2 = buildAuthHeader(bob.privHex, bob.pubHex, bob.addr, 'get-inbox');
-  const inbox = await api('GET', '/inbox', null, { 'x-stackmail-auth': bobAuth2 });
+  const inbox = await api('GET', '/inbox', null, { 'x-mailslot-auth': bobAuth2 });
   assert(inbox.ok, `inbox failed: ${JSON.stringify(inbox.data)}`);
   const messages = inbox.data.messages ?? [];
   assert(messages.length > 0, 'inbox is empty');
@@ -280,7 +280,7 @@ async function run() {
   // ─── 8. Bob previews message ────────────────────────────────────────────────
   console.log('8. Bob previews message (gets encrypted payload)...');
   const bobAuth3 = buildAuthHeader(bob.privHex, bob.pubHex, bob.addr, 'get-message', messageId);
-  const preview = await api('GET', `/inbox/${messageId}/preview`, null, { 'x-stackmail-auth': bobAuth3 });
+  const preview = await api('GET', `/inbox/${messageId}/preview`, null, { 'x-mailslot-auth': bobAuth3 });
   assert(preview.ok, `preview failed: ${JSON.stringify(preview.data)}`);
   assert(preview.data.encryptedPayload, 'no encryptedPayload');
   console.log('   ✓ from:', preview.data.from);
@@ -302,7 +302,7 @@ async function run() {
     'POST',
     `/inbox/${messageId}/claim`,
     { secret: decrypted.secret },
-    { 'x-stackmail-auth': bobAuth4 },
+    { 'x-mailslot-auth': bobAuth4 },
   );
   assert(claim.ok, `claim failed: ${JSON.stringify(claim.data)}`);
   const claimedMsg = claim.data.message;
@@ -313,7 +313,7 @@ async function run() {
   // ─── 10. Verify claimed status ──────────────────────────────────────────────
   console.log('10. Verifying message is marked claimed...');
   const bobAuth5 = buildAuthHeader(bob.privHex, bob.pubHex, bob.addr, 'get-inbox');
-  const inbox2 = await api('GET', '/inbox?claimed=true', null, { 'x-stackmail-auth': bobAuth5 });
+  const inbox2 = await api('GET', '/inbox?claimed=true', null, { 'x-mailslot-auth': bobAuth5 });
   const claimedEntry = (inbox2.data.messages ?? []).find(m => m.id === messageId);
   assert(claimedEntry?.claimed === true, 'message should be claimed');
   console.log('   ✓ claimed flag:', claimedEntry.claimed);

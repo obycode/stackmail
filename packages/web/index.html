@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Stackmail</title>
+  <title>Mailslot</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -400,7 +400,7 @@
 <header>
   <div class="logo">
     <div class="logo-icon">✉</div>
-    Stackmail
+    Mailslot
   </div>
   <nav id="main-nav" style="display:none">
     <button class="tab-btn active" data-tab="inbox">Inbox</button>
@@ -422,7 +422,7 @@
   <!-- ── no-wallet ──────────────────────────────────────────────────── -->
   <div id="panel-no-wallet" class="full-panel">
     <div class="welcome-icon">✉</div>
-    <div class="welcome-title">Welcome to Stackmail</div>
+    <div class="welcome-title">Welcome to Mailslot</div>
     <div class="welcome-sub">
       Encrypted, pay-to-send messaging on Bitcoin via Stacks.
       Connect your Leather or Xverse wallet to get started.
@@ -470,7 +470,7 @@
           <span class="step-num">2</span>
           <div>
             <strong style="color:var(--text)">Open a payment channel</strong><br>
-            This creates a StackFlow pipe between your wallet and the server so you can send and receive Stackmail messages.
+            This creates a StackFlow pipe between your wallet and the server so you can send and receive Mailslot messages.
             Your deposit gives you send capacity. The reservoir borrow gives you receive liquidity so incoming paid messages can be forwarded to you.
           </div>
         </li>
@@ -553,7 +553,7 @@
       <div class="card" id="decrypt-cli-help" style="margin-bottom:16px;display:none">
         <div class="card-title">CLI Decrypt Fallback</div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.5">
-          If your wallet does not support Stackmail decrypt yet, use the local CLI to inspect your inbox and claim messages outside the browser.
+          If your wallet does not support Mailslot decrypt yet, use the local CLI to inspect your inbox and claim messages outside the browser.
         </div>
         <pre id="decrypt-cli-commands" style="margin:0;white-space:pre-wrap;font-size:12px;line-height:1.5;color:var(--text);background:rgba(255,255,255,0.03);padding:12px;border-radius:10px;overflow:auto"></pre>
       </div>
@@ -582,7 +582,7 @@
 
         <div class="form-group">
           <label for="subject-input">Subject <span style="color:var(--muted)">(optional, encrypted)</span></label>
-          <input type="text" id="subject-input" placeholder="Hello from Stackmail" />
+          <input type="text" id="subject-input" placeholder="Hello from Mailslot" />
         </div>
 
         <div class="form-group">
@@ -706,7 +706,7 @@
           <button class="btn btn-secondary" id="admin-set-rate-btn">Set Borrow Rate</button>
           <div id="admin-rate-status" style="margin-top:10px"></div>
           <hr class="divider">
-          <div class="card-title">Stackmail Runtime Settings</div>
+          <div class="card-title">Mailslot Runtime Settings</div>
           <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
             These values are stored server-side and applied immediately without restarting the process.
           </div>
@@ -748,7 +748,7 @@
               <input type="text" id="admin-max-borrow-per-tap-input" spellcheck="false" autocomplete="off" />
             </div>
           </div>
-          <button class="btn btn-secondary" id="admin-save-settings-btn">Save Stackmail Settings</button>
+          <button class="btn btn-secondary" id="admin-save-settings-btn">Save Mailslot Settings</button>
           <div id="admin-settings-status" style="margin-top:10px"></div>
         </div>
       </div>

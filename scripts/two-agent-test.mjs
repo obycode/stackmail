@@ -1,8 +1,8 @@
 /**
- * Stackmail Two-Agent Realistic Test
+ * Mailslot Two-Agent Realistic Test
  *
  * Simulates two independent agents (Alice and Bob) communicating through the
- * Stackmail server using real StackFlow payment-channel proofs.
+ * Mailslot server using real StackFlow payment-channel proofs.
  *
  * ─── On-chain model ────────────────────────────────────────────────────────
  *
@@ -43,20 +43,20 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto';
-import { secp256k1 } from '/agent/work/stackmail/node_modules/@noble/curves/secp256k1.js';
+import { secp256k1 } from '/agent/work/mailslot/node_modules/@noble/curves/secp256k1.js';
 
 const { buildTransferMessage, sip018Sign } =
-  await import('/agent/work/stackmail/packages/server/dist/sip018.js');
+  await import('/agent/work/mailslot/packages/server/dist/sip018.js');
 const { encryptMail, decryptMail, hashSecret } =
-  await import('/agent/work/stackmail/packages/crypto/dist/index.js');
+  await import('/agent/work/mailslot/packages/crypto/dist/index.js');
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const SERVER      = process.env.STACKMAIL_SERVER_URL ?? 'http://127.0.0.1:8800';
-const RESERVOIR   = process.env.STACKMAIL_RESERVOIR_CONTRACT_ID ?? 'SP3QFYVTMS0PRJT3K3GMDW9DGR33TDHENSDWVNQMR.sm-reservoir';
-const SF_CONTRACT = process.env.STACKMAIL_SF_CONTRACT_ID ?? 'SP3QFYVTMS0PRJT3K3GMDW9DGR33TDHENSDWVNQMR.sm-stackflow';
-const TOKEN       = process.env.STACKMAIL_TOKEN_CONTRACT_ID ?? 'SP3QFYVTMS0PRJT3K3GMDW9DGR33TDHENSDWVNQMR.sm-test-token';
-const CHAIN_ID    = Number.parseInt(process.env.STACKMAIL_CHAIN_ID ?? '1', 10);
+const SERVER      = process.env.MAILSLOT_SERVER_URL ?? 'http://127.0.0.1:8800';
+const RESERVOIR   = process.env.MAILSLOT_RESERVOIR_CONTRACT_ID ?? 'SP3QFYVTMS0PRJT3K3GMDW9DGR33TDHENSDWVNQMR.sm-reservoir';
+const SF_CONTRACT = process.env.MAILSLOT_SF_CONTRACT_ID ?? 'SP3QFYVTMS0PRJT3K3GMDW9DGR33TDHENSDWVNQMR.sm-stackflow';
+const TOKEN       = process.env.MAILSLOT_TOKEN_CONTRACT_ID ?? 'SP3QFYVTMS0PRJT3K3GMDW9DGR33TDHENSDWVNQMR.sm-test-token';
+const CHAIN_ID    = Number.parseInt(process.env.MAILSLOT_CHAIN_ID ?? '1', 10);
 const HIRO_API    = CHAIN_ID === 1 ? 'https://api.mainnet.hiro.so' : 'https://api.testnet.hiro.so';
 const EXPLORER_CHAIN = CHAIN_ID === 1 ? 'mainnet' : 'testnet';
 const MSG_PRICE   = 1000n;
@@ -236,11 +236,11 @@ async function api(method, path, body, headers = {}) {
   return { status: r.status, ok: r.ok, data };
 }
 
-// ─── Stackmail operations ─────────────────────────────────────────────────────
+// ─── Mailslot operations ─────────────────────────────────────────────────────
 
 async function registerMailbox(kp) {
   const auth = buildAuthHeader(kp.privHex, kp.pubHex, kp.addr, 'get-inbox');
-  const r = await api('GET', '/inbox', null, { 'x-stackmail-auth': auth });
+  const r = await api('GET', '/inbox', null, { 'x-mailslot-auth': auth });
   if (r.status !== 200 && r.status !== 404) {
     throw new Error(`register failed: ${r.status} ${JSON.stringify(r.data)}`);
   }
@@ -300,7 +300,7 @@ async function sendMessage(senderKp, toAddr, subject, body, pipeState) {
   const r = await api(
     'POST', `/messages/${toAddr}`,
     { from: senderKp.addr, encryptedPayload: encPayload },
-    { 'x-stackmail-payment': proofHeader },
+    { 'x-mailslot-payment': proofHeader },
   );
 
   return {
@@ -311,13 +311,13 @@ async function sendMessage(senderKp, toAddr, subject, body, pipeState) {
 
 async function getInbox(kp, includeClaimed = false) {
   const auth = buildAuthHeader(kp.privHex, kp.pubHex, kp.addr, 'get-inbox');
-  const r = await api('GET', `/inbox${includeClaimed ? '?claimed=true' : ''}`, null, { 'x-stackmail-auth': auth });
+  const r = await api('GET', `/inbox${includeClaimed ? '?claimed=true' : ''}`, null, { 'x-mailslot-auth': auth });
   return r.data.messages ?? [];
 }
 
 async function claimMessage(kp, messageId) {
   const auth1 = buildAuthHeader(kp.privHex, kp.pubHex, kp.addr, 'get-message', messageId);
-  const prev = await api('GET', `/inbox/${messageId}/preview`, null, { 'x-stackmail-auth': auth1 });
+  const prev = await api('GET', `/inbox/${messageId}/preview`, null, { 'x-mailslot-auth': auth1 });
   if (!prev.ok) throw new Error(`preview: ${prev.status} ${JSON.stringify(prev.data)}`);
 
   const dec = await decryptMail(prev.data.encryptedPayload, kp.privHex);
@@ -325,7 +325,7 @@ async function claimMessage(kp, messageId) {
   if (hashSecret(dec.secret) !== expected) throw new Error('secret hash mismatch');
 
   const auth2 = buildAuthHeader(kp.privHex, kp.pubHex, kp.addr, 'claim-message', messageId);
-  const claim = await api('POST', `/inbox/${messageId}/claim`, { secret: dec.secret }, { 'x-stackmail-auth': auth2 });
+  const claim = await api('POST', `/inbox/${messageId}/claim`, { secret: dec.secret }, { 'x-mailslot-auth': auth2 });
 
   return { id: messageId, from: prev.data.from, subject: dec.subject, body: dec.body, amount: prev.data.amount };
 }
@@ -334,7 +334,7 @@ async function claimMessage(kp, messageId) {
 
 async function main() {
   console.log('════════════════════════════════════════════════════════════');
-  console.log('  Stackmail — Two-Agent Realistic Test');
+  console.log('  Mailslot — Two-Agent Realistic Test');
   console.log('════════════════════════════════════════════════════════════\n');
 
   // ── Agents ──────────────────────────────────────────────────────────────────

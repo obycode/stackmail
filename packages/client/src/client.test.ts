@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createECDH, randomBytes } from 'node:crypto';
-import { StackmailClient, StackmailError } from './client.js';
-import { encryptMail, hashSecret } from '@stackmail/crypto';
+import { MailslotClient, MailslotError } from './client.js';
+import { encryptMail, hashSecret } from '@mailslot/crypto';
 import type { ClientConfig } from './types.js';
 
 // ─── Test keypair ─────────────────────────────────────────────────────────────
@@ -28,7 +28,7 @@ function makeConfig(overrides: Partial<ClientConfig> = {}): ClientConfig {
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
-describe('StackmailClient.getInbox', () => {
+describe('MailslotClient.getInbox', () => {
   it('returns inbox entries from the server', async () => {
     const entries = [
       { id: 'msg-1', from: 'SP1ALICE', sentAt: Date.now(), amount: '1000', claimed: false },
@@ -38,27 +38,27 @@ describe('StackmailClient.getInbox', () => {
     );
     vi.stubGlobal('fetch', mockFetch);
 
-    const client = new StackmailClient(makeConfig());
+    const client = new MailslotClient(makeConfig());
     const result = await client.getInbox();
     expect(result).toEqual(entries);
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('/inbox'),
-      expect.objectContaining({ headers: expect.objectContaining({ 'x-stackmail-auth': expect.any(String) }) }),
+      expect.objectContaining({ headers: expect.objectContaining({ 'x-mailslot-auth': expect.any(String) }) }),
     );
   });
 
-  it('throws StackmailError on non-2xx response', async () => {
+  it('throws MailslotError on non-2xx response', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ error: 'auth-expired' }), { status: 401 }),
     ));
 
-    const client = new StackmailClient(makeConfig());
-    await expect(client.getInbox()).rejects.toBeInstanceOf(StackmailError);
+    const client = new MailslotClient(makeConfig());
+    await expect(client.getInbox()).rejects.toBeInstanceOf(MailslotError);
     await expect(client.getInbox()).rejects.toThrow('401');
   });
 });
 
-describe('StackmailClient.send', () => {
+describe('MailslotClient.send', () => {
   it('fetches server config and posts a message', async () => {
     const serverStatus = {
       ok: true, messagePriceSats: '1000', minFeeSats: '100',
@@ -70,7 +70,7 @@ describe('StackmailClient.send', () => {
 
     vi.stubGlobal('fetch', mockFetch);
 
-    const client = new StackmailClient(makeConfig());
+    const client = new MailslotClient(makeConfig());
     const result = await client.send({ to: 'SP1BOB', recipientPublicKey: recipientPubkeyHex, body: 'Hello Bob' });
     expect(result.messageId).toBe('msg-123');
     expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -82,14 +82,14 @@ describe('StackmailClient.send', () => {
     expect(mockFetch.mock.calls[1][1]?.method).toBe('POST');
   });
 
-  it('throws StackmailError when server is unreachable', async () => {
+  it('throws MailslotError when server is unreachable', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ error: 'internal-error' }), { status: 500 }),
     ));
 
-    const client = new StackmailClient(makeConfig());
+    const client = new MailslotClient(makeConfig());
     const err = await client.send({ to: 'SP1BOB', recipientPublicKey: recipientPubkeyHex, body: 'Hi' }).catch(e => e);
-    expect(err).toBeInstanceOf(StackmailError);
+    expect(err).toBeInstanceOf(MailslotError);
     expect(err.statusCode).toBe(500);
   });
 
@@ -105,7 +105,7 @@ describe('StackmailClient.send', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(serverStatus), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, messageId: 'msg-123' }), { status: 200 })));
 
-    const client = new StackmailClient(makeConfig({ paymentProofBuilder: proofBuilder }));
+    const client = new MailslotClient(makeConfig({ paymentProofBuilder: proofBuilder }));
     await client.send({ to: 'SP1BOB', recipientPublicKey: recipientPubkeyHex, body: 'Hash arg test' });
 
     const call = proofBuilder.mock.calls[0]?.[0] as { hashedSecret: string; hashedSecretHex: string } | undefined;
@@ -115,7 +115,7 @@ describe('StackmailClient.send', () => {
   });
 });
 
-describe('StackmailClient.claim', () => {
+describe('MailslotClient.claim', () => {
   it('decrypts message and reveals secret to server', async () => {
     // Create a real encrypted message so decryption actually works
     const secretHex = randomBytes(32).toString('hex');
@@ -154,7 +154,7 @@ describe('StackmailClient.claim', () => {
 
     vi.stubGlobal('fetch', mockFetch);
 
-    const client = new StackmailClient(makeConfig());
+    const client = new MailslotClient(makeConfig());
     const result = await client.claim(msgId);
 
     expect(result.id).toBe(msgId);
@@ -183,8 +183,8 @@ describe('StackmailClient.claim', () => {
     }), { status: 200 }));
     vi.stubGlobal('fetch', mockFetch);
 
-    const client = new StackmailClient(makeConfig());
-    await expect(client.claim('msg-hash-mismatch')).rejects.toBeInstanceOf(StackmailError);
+    const client = new MailslotClient(makeConfig());
+    await expect(client.claim('msg-hash-mismatch')).rejects.toBeInstanceOf(MailslotError);
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
@@ -216,7 +216,7 @@ describe('StackmailClient.claim', () => {
         pendingPayment: null,
       }), { status: 200 })));
 
-    const client = new StackmailClient(makeConfig({ saveClaimProof }));
+    const client = new MailslotClient(makeConfig({ saveClaimProof }));
     await client.claim('msg-proof');
     expect(saveClaimProof).toHaveBeenCalledTimes(1);
     expect(saveClaimProof).toHaveBeenCalledWith(expect.objectContaining({
@@ -225,7 +225,7 @@ describe('StackmailClient.claim', () => {
     }));
   });
 
-  it('throws StackmailError if server rejects the claim', async () => {
+  it('throws MailslotError if server rejects the claim', async () => {
     const secretHex = randomBytes(32).toString('hex');
     const encryptedPayload = await encryptMail(
       { v: 1, secret: secretHex, body: 'test' },
@@ -240,14 +240,14 @@ describe('StackmailClient.claim', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'already-claimed' }), { status: 409 }))
     );
 
-    const client = new StackmailClient(makeConfig());
+    const client = new MailslotClient(makeConfig());
     const err = await client.claim('msg-already-done').catch(e => e);
-    expect(err).toBeInstanceOf(StackmailError);
+    expect(err).toBeInstanceOf(MailslotError);
     expect(err.statusCode).toBe(409);
   });
 });
 
-describe('StackmailClient.poll', () => {
+describe('MailslotClient.poll', () => {
   it('claims all unclaimed messages and returns results', async () => {
     const secretHex = randomBytes(32).toString('hex');
     const encryptedPayload = await encryptMail(
@@ -277,7 +277,7 @@ describe('StackmailClient.poll', () => {
 
     vi.stubGlobal('fetch', mockFetch);
 
-    const client = new StackmailClient(makeConfig());
+    const client = new MailslotClient(makeConfig());
     const result = await client.poll();
 
     expect(result.inbox).toHaveLength(1);
@@ -294,7 +294,7 @@ describe('StackmailClient.poll', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'not-found' }), { status: 404 }))
     );
 
-    const client = new StackmailClient(makeConfig());
+    const client = new MailslotClient(makeConfig());
     const result = await client.poll();
 
     expect(result.claimed).toHaveLength(0);

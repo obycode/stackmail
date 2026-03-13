@@ -28,7 +28,7 @@ function signMessage(message: string, privateKey: ReturnType<typeof generateKeyP
   return signer.sign({ key: privateKey, dsaEncoding: 'ieee-p1363' }).toString('hex');
 }
 
-/** Build a base64-encoded x-stackmail-auth header. */
+/** Build a base64-encoded x-mailslot-auth header. */
 function buildAuthHeader(opts: {
   pubkey: string;
   action: string;

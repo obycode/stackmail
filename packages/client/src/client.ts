@@ -1,5 +1,5 @@
 /**
- * StackmailClient — agent-side client, no server required.
+ * MailslotClient — agent-side client, no server required.
  *
  * Agents poll with client.poll() on a cron/interval. No inbound ports.
  *
@@ -20,7 +20,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { encryptMail, decryptMail, hashSecret, verifySecretHash } from '@stackmail/crypto';
+import { encryptMail, decryptMail, hashSecret, verifySecretHash } from '@mailslot/crypto';
 import { verifyPendingPaymentProof } from './sip018.js';
 import type {
   ClaimProofRecord,
@@ -37,20 +37,20 @@ import type {
   TapStateView,
 } from './types.js';
 
-export class StackmailError extends Error {
+export class MailslotError extends Error {
   readonly statusCode: number;
   readonly reason: string;
   readonly details: Record<string, unknown>;
   constructor(statusCode: number, reason: string, details: Record<string, unknown> = {}) {
-    super(`Stackmail ${statusCode}: ${reason}`);
-    this.name = 'StackmailError';
+    super(`Mailslot ${statusCode}: ${reason}`);
+    this.name = 'MailslotError';
     this.statusCode = statusCode;
     this.reason = reason;
     this.details = details;
   }
 }
 
-export class StackmailClient {
+export class MailslotClient {
   private readonly config: ClientConfig;
   private inboxSessionToken: string | null = null;
   private inboxSessionExpiresAt = 0;
@@ -67,18 +67,18 @@ export class StackmailClient {
     });
     this.captureInboxSession(res);
     const data = await res.json().catch(() => ({})) as { tap?: TapStateView | null } & Record<string, unknown>;
-    if (!res.ok) throw new StackmailError(res.status, String(data['error'] ?? 'tap-state-failed'), data);
+    if (!res.ok) throw new MailslotError(res.status, String(data['error'] ?? 'tap-state-failed'), data);
     return data.tap ?? null;
   }
 
   async prepareAddFunds(amount: string): Promise<PreparedLiquidityAction> {
     if (!this.config.sip018Signer) {
-      throw new StackmailError(400, 'sip018-signer-required', { operation: 'prepareAddFunds' });
+      throw new MailslotError(400, 'sip018-signer-required', { operation: 'prepareAddFunds' });
     }
     const status = await this.fetchFullServerStatus(this.config.serverUrl);
     const tap = await this.getTapState();
     if (!tap) {
-      throw new StackmailError(404, 'no-tap', { operation: 'prepareAddFunds' });
+      throw new MailslotError(404, 'no-tap', { operation: 'prepareAddFunds' });
     }
     const nextMyBalance = (BigInt(tap.myBalance) + BigInt(amount)).toString();
     const nextReservoirBalance = tap.serverBalance;
@@ -111,7 +111,7 @@ export class StackmailClient {
       signal: AbortSignal.timeout(20_000),
     });
     const data = await res.json().catch(() => ({})) as Record<string, unknown>;
-    if (!res.ok) throw new StackmailError(res.status, String(data['error'] ?? 'prepare-add-funds-failed'), data);
+    if (!res.ok) throw new MailslotError(res.status, String(data['error'] ?? 'prepare-add-funds-failed'), data);
     return {
       reservoirContract: status.reservoirContract,
       stackflowContract: status.sfContract,
@@ -129,12 +129,12 @@ export class StackmailClient {
 
   async prepareBorrowMoreLiquidity(amount: string): Promise<PreparedLiquidityAction> {
     if (!this.config.sip018Signer) {
-      throw new StackmailError(400, 'sip018-signer-required', { operation: 'prepareBorrowMoreLiquidity' });
+      throw new MailslotError(400, 'sip018-signer-required', { operation: 'prepareBorrowMoreLiquidity' });
     }
     const status = await this.fetchFullServerStatus(this.config.serverUrl);
     const tap = await this.getTapState();
     if (!tap) {
-      throw new StackmailError(404, 'no-tap', { operation: 'prepareBorrowMoreLiquidity' });
+      throw new MailslotError(404, 'no-tap', { operation: 'prepareBorrowMoreLiquidity' });
     }
     const nextMyBalance = tap.myBalance;
     const nextReservoirBalance = (BigInt(tap.serverBalance) + BigInt(amount)).toString();
@@ -168,7 +168,7 @@ export class StackmailClient {
       signal: AbortSignal.timeout(20_000),
     });
     const data = await res.json().catch(() => ({})) as Record<string, unknown>;
-    if (!res.ok) throw new StackmailError(res.status, String(data['error'] ?? 'prepare-borrow-failed'), data);
+    if (!res.ok) throw new MailslotError(res.status, String(data['error'] ?? 'prepare-borrow-failed'), data);
     return {
       reservoirContract: status.reservoirContract,
       stackflowContract: status.sfContract,
@@ -216,7 +216,7 @@ export class StackmailClient {
     });
     this.captureInboxSession(res);
     const data = await res.json().catch(() => ({})) as Record<string, unknown>;
-    if (!res.ok) throw new StackmailError(res.status, String(data['error'] ?? 'tap-sync-failed'), data);
+    if (!res.ok) throw new MailslotError(res.status, String(data['error'] ?? 'tap-sync-failed'), data);
   }
 
   // ─── Send ─────────────────────────────────────────────────────────────────
@@ -274,7 +274,7 @@ export class StackmailClient {
 
     const body = await res.json().catch(() => ({})) as Record<string, unknown>;
     if (!res.ok) {
-      throw new StackmailError(res.status, String(body['error'] ?? 'send-failed'), body);
+      throw new MailslotError(res.status, String(body['error'] ?? 'send-failed'), body);
     }
 
     return {
@@ -302,7 +302,7 @@ export class StackmailClient {
     this.captureInboxSession(res);
 
     const data = await res.json().catch(() => ({})) as Record<string, unknown>;
-    if (!res.ok) throw new StackmailError(res.status, String(data['error'] ?? 'inbox-failed'), data);
+    if (!res.ok) throw new MailslotError(res.status, String(data['error'] ?? 'inbox-failed'), data);
     return (data['messages'] as InboxEntry[]) ?? [];
   }
 
@@ -323,7 +323,7 @@ export class StackmailClient {
     const pendingPayment = preview.pendingPayment;
 
     if (!verifySecretHash(secretHex, preview.hashedSecret)) {
-      throw new StackmailError(409, 'secret-hash-mismatch', {
+      throw new MailslotError(409, 'secret-hash-mismatch', {
         messageId,
         previewHashedSecret: preview.hashedSecret,
         computedHash,
@@ -339,7 +339,7 @@ export class StackmailClient {
         chainId: this.config.chainId,
       });
       if (!verification.ok) {
-        throw new StackmailError(409, 'pending-payment-invalid', {
+        throw new MailslotError(409, 'pending-payment-invalid', {
           messageId,
           reason: verification.reason,
         });
@@ -360,7 +360,7 @@ export class StackmailClient {
     this.captureInboxSession(res);
 
     const data = await res.json().catch(() => ({})) as Record<string, unknown>;
-    if (!res.ok) throw new StackmailError(res.status, String(data['error'] ?? 'claim-failed'), data);
+    if (!res.ok) throw new MailslotError(res.status, String(data['error'] ?? 'claim-failed'), data);
 
     const message = data['message'] as MailMessage;
     const claimedPendingPayment = data['pendingPayment'] as PendingPayment | null;
@@ -401,7 +401,7 @@ export class StackmailClient {
         await this.config.saveClaimProof(claimProof);
       } catch (err) {
         console.warn(
-          `[stackmail] failed to persist claim proof for message ${messageId}: ${
+          `[mailslot] failed to persist claim proof for message ${messageId}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
@@ -427,7 +427,7 @@ export class StackmailClient {
    * Used by claim() to verify pending payment before revealing the secret.
    */
   private async fetchPreview(messageId: string): Promise<{
-    encryptedPayload: import('@stackmail/crypto').EncryptedMail;
+    encryptedPayload: import('@mailslot/crypto').EncryptedMail;
     pendingPayment: PendingPayment | null;
     hashedSecret: string;
   }> {
@@ -438,9 +438,9 @@ export class StackmailClient {
     this.captureInboxSession(res);
 
     const data = await res.json().catch(() => ({})) as Record<string, unknown>;
-    if (!res.ok) throw new StackmailError(res.status, String(data['error'] ?? 'preview-failed'), data);
+    if (!res.ok) throw new MailslotError(res.status, String(data['error'] ?? 'preview-failed'), data);
     return {
-      encryptedPayload: data['encryptedPayload'] as import('@stackmail/crypto').EncryptedMail,
+      encryptedPayload: data['encryptedPayload'] as import('@mailslot/crypto').EncryptedMail,
       pendingPayment: (data['pendingPayment'] as PendingPayment | null) ?? null,
       hashedSecret: String(data['hashedSecret'] ?? ''),
     };
@@ -499,7 +499,7 @@ export class StackmailClient {
   }> {
     const res = await fetch(`${serverUrl}/status`, { signal: AbortSignal.timeout(10_000) });
     const data = await res.json().catch(() => ({})) as Record<string, unknown>;
-    if (!res.ok) throw new StackmailError(res.status, String(data['error'] ?? 'status-failed'), data);
+    if (!res.ok) throw new MailslotError(res.status, String(data['error'] ?? 'status-failed'), data);
     return {
       messagePriceSats: String(data['messagePriceSats'] ?? '1000'),
       minFeeSats:       String(data['minFeeSats']       ?? '100'),
@@ -541,8 +541,8 @@ export class StackmailClient {
     if (this.authAudience) return this.authAudience;
     const res = await fetch(`${this.config.serverUrl}/status`, { signal: AbortSignal.timeout(10_000) });
     const data = await res.json().catch(() => ({})) as Record<string, unknown>;
-    if (!res.ok) throw new StackmailError(res.status, String(data['error'] ?? 'status-failed'), data);
-    this.authAudience = String(data['authAudience'] ?? data['serverAddress'] ?? 'Stackmail');
+    if (!res.ok) throw new MailslotError(res.status, String(data['error'] ?? 'status-failed'), data);
+    this.authAudience = String(data['authAudience'] ?? data['serverAddress'] ?? 'Mailslot');
     return this.authAudience;
   }
 
@@ -551,14 +551,14 @@ export class StackmailClient {
     messageId?: string,
   ): Promise<Record<string, string>> {
     if (this.inboxSessionToken && Date.now() < this.inboxSessionExpiresAt) {
-      return { 'x-stackmail-session': this.inboxSessionToken };
+      return { 'x-mailslot-session': this.inboxSessionToken };
     }
-    return { 'x-stackmail-auth': await this.buildAuthHeader(action, messageId) };
+    return { 'x-mailslot-auth': await this.buildAuthHeader(action, messageId) };
   }
 
   private captureInboxSession(res: Response): void {
-    const token = res.headers.get('x-stackmail-session');
-    const expiresAtRaw = res.headers.get('x-stackmail-session-expires-at');
+    const token = res.headers.get('x-mailslot-session');
+    const expiresAtRaw = res.headers.get('x-mailslot-session-expires-at');
     const expiresAt = expiresAtRaw ? Number(expiresAtRaw) : 0;
     if (token && Number.isFinite(expiresAt) && expiresAt > Date.now()) {
       this.inboxSessionToken = token;

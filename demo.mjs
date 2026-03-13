@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Stackmail end-to-end demo
+ * Mailslot end-to-end demo
  *
  * Spins through the full flow: register → send → inbox → preview → decrypt → claim.
  * Requires the server to be running locally (see README).
@@ -49,10 +49,10 @@ function hashSecret(hex) {
 }
 
 // ─── Derive STX address ───────────────────────────────────────────────────────
-writeFileSync('/tmp/_stackmail_addr.mjs',
+writeFileSync('/tmp/_mailslot_addr.mjs',
   `import{pubkeyToStxAddress}from'${process.cwd()}/packages/server/dist/auth.js';` +
   `process.stdout.write(pubkeyToStxAddress('${pubkeyHex}'));`);
-const myAddress = execSync('node /tmp/_stackmail_addr.mjs').toString().trim();
+const myAddress = execSync('node /tmp/_mailslot_addr.mjs').toString().trim();
 
 // ─── Auth header builder ──────────────────────────────────────────────────────
 function authHeader(action, messageId) {
@@ -79,7 +79,7 @@ async function api(path, opts = {}) {
 }
 
 // ─── Demo ─────────────────────────────────────────────────────────────────────
-console.log(`\nStackmail demo  →  ${BASE}`);
+console.log(`\nMailslot demo  →  ${BASE}`);
 console.log(`My STX address  :  ${myAddress}`);
 console.log(`My pubkey       :  ${pubkeyHex}`);
 
@@ -91,7 +91,7 @@ check('GET /health → 200', health.status === 200);
 // 2. Auth to /inbox — registers our pubkey with the server
 hr('2. Register via GET /inbox');
 const inbox0 = await api('/inbox', {
-  headers: { 'x-stackmail-auth': authHeader('get-inbox') },
+  headers: { 'x-mailslot-auth': authHeader('get-inbox') },
 });
 check('GET /inbox → 200', inbox0.status === 200);
 check('inbox is array', Array.isArray(inbox0.body.messages), `(${inbox0.body.messages?.length} messages)`);
@@ -109,7 +109,7 @@ const secretHex       = randomBytes(32).toString('hex');
 const hashedSecretHex = hashSecret(secretHex);
 
 const encryptedPayload = encryptMail(
-  { v: 1, secret: secretHex, subject: 'Hello from the demo!', body: 'End-to-end stackmail is working 🎉' },
+  { v: 1, secret: secretHex, subject: 'Hello from the demo!', body: 'End-to-end mailslot is working 🎉' },
   pubkeyHex,
 );
 
@@ -131,7 +131,7 @@ const messageId = sent.body.messageId;
 // 5. Check inbox
 hr('5. GET /inbox (message appears)');
 const inbox1 = await api('/inbox', {
-  headers: { 'x-stackmail-auth': authHeader('get-inbox') },
+  headers: { 'x-mailslot-auth': authHeader('get-inbox') },
 });
 const entry = inbox1.body.messages?.find(m => m.id === messageId);
 check('message is in inbox', !!entry);
@@ -140,7 +140,7 @@ check('message is unclaimed', entry?.claimed === false);
 // 6. Preview
 hr('6. GET /inbox/:id/preview (fetch encrypted payload)');
 const preview = await api(`/inbox/${messageId}/preview`, {
-  headers: { 'x-stackmail-auth': authHeader('get-inbox') },
+  headers: { 'x-mailslot-auth': authHeader('get-inbox') },
 });
 check('GET /preview → 200', preview.status === 200);
 check('encryptedPayload.v === 1', preview.body.encryptedPayload?.v === 1);
@@ -150,14 +150,14 @@ check('hashedSecret matches', preview.body.hashedSecret === hashedSecretHex);
 hr('7. Decrypt (client-side)');
 const decrypted = decryptMail(preview.body.encryptedPayload, privkeyRaw.toString('hex'));
 check('subject', decrypted.subject === 'Hello from the demo!', decrypted.subject);
-check('body', decrypted.body === 'End-to-end stackmail is working 🎉', decrypted.body);
+check('body', decrypted.body === 'End-to-end mailslot is working 🎉', decrypted.body);
 check('secret matches', decrypted.secret === secretHex);
 
 // 8. Claim with wrong secret → 400
 hr('8. POST /inbox/:id/claim  (wrong secret → rejected)');
 const wrongClaim = await api(`/inbox/${messageId}/claim`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json', 'x-stackmail-auth': authHeader('claim-message', messageId) },
+  headers: { 'content-type': 'application/json', 'x-mailslot-auth': authHeader('claim-message', messageId) },
   body: JSON.stringify({ secret: randomBytes(32).toString('hex') }),
 });
 check('wrong secret → 400', wrongClaim.status === 400, wrongClaim.body.error);
@@ -166,7 +166,7 @@ check('wrong secret → 400', wrongClaim.status === 400, wrongClaim.body.error);
 hr('9. POST /inbox/:id/claim  (correct secret → claimed)');
 const goodClaim = await api(`/inbox/${messageId}/claim`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json', 'x-stackmail-auth': authHeader('claim-message', messageId) },
+  headers: { 'content-type': 'application/json', 'x-mailslot-auth': authHeader('claim-message', messageId) },
   body: JSON.stringify({ secret: decrypted.secret }),
 });
 check('claim → 200', goodClaim.status === 200);
@@ -175,7 +175,7 @@ check('returned message id', goodClaim.body.message?.id === messageId);
 // 10. Double-claim → 409
 hr('10. Claim again (already-claimed → 409)');
 const dup = await api(`/inbox/${messageId}/preview`, {
-  headers: { 'x-stackmail-auth': authHeader('get-inbox') },
+  headers: { 'x-mailslot-auth': authHeader('get-inbox') },
 });
 check('already-claimed → 409', dup.status === 409, dup.body.error);
 

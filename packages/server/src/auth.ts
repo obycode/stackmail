@@ -2,18 +2,18 @@
  * Inbox authentication — two formats supported:
  *
  * ── Format 1: agent / programmatic (legacy) ───────────────────────────────────
- * x-stackmail-auth: base64(JSON({ pubkey, payload, signature }))
+ * x-mailslot-auth: base64(JSON({ pubkey, payload, signature }))
  *   pubkey:    compressed secp256k1 pubkey (33 bytes hex)
  *   payload:   { action, address, timestamp, messageId? }
  *   signature: compact ECDSA 64-byte r||s over sha256(JSON.stringify(payload))
  *
  * ── Format 2: Stacks wallet (SIP-018 structured data) ────────────────────────
- * x-stackmail-auth: base64(JSON({ type: "sip018", pubkey, message, signature }))
+ * x-mailslot-auth: base64(JSON({ type: "sip018", pubkey, message, signature }))
  *   pubkey:    compressed secp256k1 pubkey (33 bytes hex) from wallet
  *   message:   TypedMessage { action, address, timestamp, messageId? } (Clarity types)
  *   signature: 65-byte [recovery, r, s] hex from stx_signStructuredMessage
  *
- * SIP-018 auth domain: name="Stackmail", version="0.6.0", chain-id=<chainId>
+ * SIP-018 auth domain: name="Mailslot", version="0.6.0", chain-id=<chainId>
  *
  * In both formats the server verifies:
  *   1. signature is valid over the payload / message
@@ -30,7 +30,7 @@ import type { MessageStore } from './store.js';
 import { sip018Verify, type TypedMessage } from './sip018.js';
 
 /** Domain name used for SIP-018 wallet authentication */
-export const AUTH_DOMAIN = 'Stackmail';
+export const AUTH_DOMAIN = 'Mailslot';
 
 export class AuthError extends Error {
   readonly statusCode: number;
@@ -204,7 +204,7 @@ function base64UrlDecode(value: string): Buffer {
 
 function getSessionSecret(config: Config): Buffer {
   return createHash('sha256')
-    .update(`stackmail-session-v1|${config.serverPrivateKey}|${config.serverStxAddress}|${config.chainId}`)
+    .update(`mailslot-session-v1|${config.serverPrivateKey}|${config.serverStxAddress}|${config.chainId}`)
     .digest();
 }
 

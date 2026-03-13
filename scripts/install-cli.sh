@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_URL="${STACKMAIL_REPO_URL:-https://github.com/warmidris/stackmail.git}"
-INSTALL_ROOT="${STACKMAIL_INSTALL_ROOT:-$HOME/.local/share/stackmail}"
-BIN_DIR="${STACKMAIL_BIN_DIR:-$HOME/.local/bin}"
+REPO_URL="${MAILSLOT_REPO_URL:-${STACKMAIL_REPO_URL:-https://github.com/warmidris/stackmail.git}}"
+INSTALL_ROOT="${MAILSLOT_INSTALL_ROOT:-$HOME/.local/share/mailslot}"
+BIN_DIR="${MAILSLOT_BIN_DIR:-$HOME/.local/bin}"
 TMP_DIR="$(mktemp -d)"
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -31,17 +31,18 @@ mv "$TMP_DIR/repo" "$INSTALL_ROOT"
 )
 
 mkdir -p "$BIN_DIR"
-ln -sf "$INSTALL_ROOT/bin/stackmail" "$BIN_DIR/stackmail"
+ln -sf "$INSTALL_ROOT/bin/mailslot" "$BIN_DIR/mailslot"
+ln -sf "$INSTALL_ROOT/bin/mailslot" "$BIN_DIR/stackmail"
 
 cat <<EOF
-Stackmail CLI installed.
+Mailslot CLI installed.
 
 Add this to your shell profile if needed:
   export PATH="$BIN_DIR:\$PATH"
 
 Then configure a private key:
-  export STACKMAIL_PRIVATE_KEY=<your-64-char-hex-key>
+  export MAILSLOT_PRIVATE_KEY=<your-64-char-hex-key>
 
 And run:
-  stackmail inbox
+  mailslot inbox
 EOF

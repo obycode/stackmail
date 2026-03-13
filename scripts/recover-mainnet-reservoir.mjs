@@ -29,7 +29,7 @@ import { createNetwork } from '@stacks/network';
 const require = createRequire(import.meta.url);
 const { generateWallet } = require('/Users/brice/obybot/work/stackflow/node_modules/@stacks/wallet-sdk/dist/index.js');
 const { buildTransferMessage, sip018Sign } =
-  await import('/Users/brice/obybot/work/stackmail/packages/server/dist/sip018.js');
+  await import('/Users/brice/obybot/work/mailslot/packages/server/dist/sip018.js');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -51,8 +51,8 @@ const DEFAULTS = {
   tapAmount: 10_000n,
   borrowAmount: 10_000n,
   mnemonicPath: '/Users/brice/obybot/identity/aibtc/mnemonic.txt',
-  dbPath: '/Users/brice/obybot/work/stackmail/data/stackmail.db',
-  envPath: '/Users/brice/obybot/work/stackmail/.env',
+  dbPath: '/Users/brice/obybot/work/mailslot/data/mailslot.db',
+  envPath: '/Users/brice/obybot/work/mailslot/.env',
 };
 
 function normalizePrivateKey(input) {
@@ -153,8 +153,8 @@ function replaceEnvValue(contents, key, value) {
 async function updateEnvFile(reservoirContractId) {
   const current = fs.readFileSync(DEFAULTS.envPath, 'utf8');
   const next = replaceEnvValue(
-    replaceEnvValue(current, 'STACKMAIL_RESERVOIR_CONTRACT_ID', reservoirContractId),
-    'STACKMAIL_SF_CONTRACT_ID',
+    replaceEnvValue(current, 'MAILSLOT_RESERVOIR_CONTRACT_ID', reservoirContractId),
+    'MAILSLOT_SF_CONTRACT_ID',
     DEFAULTS.sfContractId,
   );
   fs.writeFileSync(DEFAULTS.envPath, next);

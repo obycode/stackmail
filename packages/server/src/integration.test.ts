@@ -12,7 +12,7 @@ import { request as httpRequest } from 'node:http';
 import { createMailServer, type IPaymentService } from './app.js';
 import { SqliteMessageStore } from './store.js';
 import { pubkeyToStxAddress } from './auth.js';
-import { encryptMail, decryptMail, hashSecret } from '@stackmail/crypto';
+import { encryptMail, decryptMail, hashSecret } from '@mailslot/crypto';
 import type { Config } from './types.js';
 import type { PendingPayment } from './types.js';
 import type { VerifiedPayment } from './payment.js';
@@ -332,7 +332,7 @@ describe('admin runtime settings', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'x-stackmail-auth': authHeader,
+          'x-mailslot-auth': authHeader,
         },
         body: JSON.stringify({
           messagePriceSats: '2500',
@@ -384,7 +384,7 @@ describe('GET /tap/state', () => {
     });
 
     const res = await fetch(`${baseUrl}/tap/state`, {
-      headers: { 'x-stackmail-auth': authHeader },
+      headers: { 'x-mailslot-auth': authHeader },
     });
     expect(res.status).toBe(200);
     const body = await res.json() as {
@@ -428,7 +428,7 @@ describe('recipient public key registration', () => {
     });
 
     const inboxRes = await fetch(`${baseUrl}/inbox`, {
-      headers: { 'x-stackmail-auth': authHeader },
+      headers: { 'x-mailslot-auth': authHeader },
     });
     expect(inboxRes.status).toBe(200);
 
@@ -497,10 +497,10 @@ describe('full send → inbox → preview → claim flow', () => {
     });
 
     const res = await fetch(`${baseUrl}/inbox`, {
-      headers: { 'x-stackmail-auth': authHeader },
+      headers: { 'x-mailslot-auth': authHeader },
     });
     expect(res.status).toBe(200);
-    inboxSessionToken = res.headers.get('x-stackmail-session') ?? '';
+    inboxSessionToken = res.headers.get('x-mailslot-session') ?? '';
     expect(inboxSessionToken).toBeTruthy();
     const body = await res.json() as { messages: unknown[] };
     expect(Array.isArray(body.messages)).toBe(true);
@@ -549,7 +549,7 @@ describe('full send → inbox → preview → claim flow', () => {
     });
 
     const res = await fetch(`${baseUrl}/inbox`, {
-      headers: { 'x-stackmail-auth': authHeader },
+      headers: { 'x-mailslot-auth': authHeader },
     });
     expect(res.status).toBe(200);
     const body = await res.json() as { messages: Array<{ id: string; claimed: boolean }> };
@@ -561,10 +561,10 @@ describe('full send → inbox → preview → claim flow', () => {
 
   it('step 4: GET /inbox/:id/preview returns encrypted payload', async () => {
     const res = await fetch(`${baseUrl}/inbox/${messageId}/preview`, {
-      headers: { 'x-stackmail-session': inboxSessionToken },
+      headers: { 'x-mailslot-session': inboxSessionToken },
     });
     expect(res.status).toBe(200);
-    const refreshedSession = res.headers.get('x-stackmail-session') ?? '';
+    const refreshedSession = res.headers.get('x-mailslot-session') ?? '';
     expect(refreshedSession).toBeTruthy();
     inboxSessionToken = refreshedSession;
     const body = await res.json() as Record<string, unknown>;
@@ -589,7 +589,7 @@ describe('full send → inbox → preview → claim flow', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-stackmail-session': inboxSessionToken,
+        'x-mailslot-session': inboxSessionToken,
       },
       body: JSON.stringify({ secret: randomBytes(32).toString('hex') }),
     });
@@ -600,10 +600,10 @@ describe('full send → inbox → preview → claim flow', () => {
 
   it('step 6: full preview → decrypt → claim round-trip succeeds', async () => {
     const previewRes = await fetch(`${baseUrl}/inbox/${messageId}/preview`, {
-      headers: { 'x-stackmail-session': inboxSessionToken },
+      headers: { 'x-mailslot-session': inboxSessionToken },
     });
     expect(previewRes.status).toBe(200);
-    inboxSessionToken = previewRes.headers.get('x-stackmail-session') ?? inboxSessionToken;
+    inboxSessionToken = previewRes.headers.get('x-mailslot-session') ?? inboxSessionToken;
     const preview = await previewRes.json() as {
       encryptedPayload: { iv: string; ephemeralPK: string; cipherText: string; mac: string; wasString: boolean };
     };
@@ -617,7 +617,7 @@ describe('full send → inbox → preview → claim flow', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-stackmail-session': inboxSessionToken,
+        'x-mailslot-session': inboxSessionToken,
       },
       body: JSON.stringify({ secret: secretHex }),
     });
@@ -638,7 +638,7 @@ describe('full send → inbox → preview → claim flow', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-stackmail-auth': authHeader,
+        'x-mailslot-auth': authHeader,
       },
       body: JSON.stringify({ secret: randomBytes(32).toString('hex') }),
     });
@@ -689,7 +689,7 @@ describe('recipient tap requirement', () => {
       privateKey: recipientSignKeypair.privateKey,
     });
     const inboxBefore = await fetch(`${baseUrl}/inbox`, {
-      headers: { 'x-stackmail-auth': authHeader },
+      headers: { 'x-mailslot-auth': authHeader },
     });
     expect(inboxBefore.status).toBe(200);
     const inboxBeforeBody = await inboxBefore.json() as { messages: Array<{ id: string }> };
@@ -697,7 +697,7 @@ describe('recipient tap requirement', () => {
 
     paymentService.outgoingPaymentEnabled = true;
     const inboxAfter = await fetch(`${baseUrl}/inbox`, {
-      headers: { 'x-stackmail-auth': authHeader },
+      headers: { 'x-mailslot-auth': authHeader },
     });
     expect(inboxAfter.status).toBe(200);
     const inboxAfterBody = await inboxAfter.json() as { messages: Array<{ id: string }> };
@@ -713,7 +713,7 @@ describe('auth error cases', () => {
 
   it('GET /inbox with invalid auth header returns 401', async () => {
     const res = await fetch(`${baseUrl}/inbox`, {
-      headers: { 'x-stackmail-auth': 'not-valid-base64-json' },
+      headers: { 'x-mailslot-auth': 'not-valid-base64-json' },
     });
     expect(res.status).toBe(401);
   });
@@ -726,7 +726,7 @@ describe('auth error cases', () => {
       privateKey: recipientSignKeypair.privateKey,
     });
     const res = await fetch(`${baseUrl}/inbox`, {
-      headers: { 'x-stackmail-auth': authHeader },
+      headers: { 'x-mailslot-auth': authHeader },
     });
     expect(res.status).toBe(403);
     const body = await res.json() as { error: string };
@@ -855,7 +855,7 @@ describe('claim finalization', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-stackmail-auth': claimAuth,
+        'x-mailslot-auth': claimAuth,
       },
       body: JSON.stringify({ secret: secretHex }),
     });
@@ -939,7 +939,7 @@ describe('sender cancel', () => {
     });
     const cancelRes = await fetch(`${cancelUrl}/messages/${cancellableId}/cancel`, {
       method: 'POST',
-      headers: { 'x-stackmail-auth': cancelAuth },
+      headers: { 'x-mailslot-auth': cancelAuth },
     });
     expect(cancelRes.status).toBe(200);
     const cancelled = await cancelStore.getMessageForSender(cancellableId, senderAddress);
@@ -956,7 +956,7 @@ describe('sender cancel', () => {
       privateKey: recipientSignKeypair.privateKey,
     });
     const previewRes = await fetch(`${cancelUrl}/inbox/${previewedId}/preview`, {
-      headers: { 'x-stackmail-auth': inboxAuth },
+      headers: { 'x-mailslot-auth': inboxAuth },
     });
     expect(previewRes.status).toBe(200);
 
@@ -969,7 +969,7 @@ describe('sender cancel', () => {
     });
     const cancelAfterPreviewRes = await fetch(`${cancelUrl}/messages/${previewedId}/cancel`, {
       method: 'POST',
-      headers: { 'x-stackmail-auth': cancelAfterPreviewAuth },
+      headers: { 'x-mailslot-auth': cancelAfterPreviewAuth },
     });
     expect(cancelAfterPreviewRes.status).toBe(409);
     const errorBody = await cancelAfterPreviewRes.json() as { error: string };
@@ -1113,7 +1113,7 @@ describe('security hardening', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-stackmail-webhook-token': 'hook-secret',
+        'x-mailslot-webhook-token': 'hook-secret',
       },
       body: JSON.stringify({ event: 'force-close-detected', counterparty: recipientAddress }),
     });

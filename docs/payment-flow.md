@@ -1,8 +1,8 @@
-# Stackmail Payment Flow
+# Mailslot Payment Flow
 
 ## Goal
 
-Define the rules Stackmail uses to accept sender payments, reserve recipient liquidity, and expose tap health in the UI.
+Define the rules Mailslot uses to accept sender payments, reserve recipient liquidity, and expose tap health in the UI.
 
 This document distinguishes:
 
@@ -19,7 +19,7 @@ This document distinguishes:
 - Pending balance: not-yet-matured deposit shown in `pending-1` or `pending-2`.
 - Effective balance: `settled + pending` for the relevant side.
 
-For Stackmail, the practical balance policy is:
+For Mailslot, the practical balance policy is:
 
 - use effective balance for gating sends and receives
 - show that this includes pending liquidity in the UI
@@ -101,7 +101,7 @@ Sender cancel policy:
 These must hold for every accepted sender proof:
 
 1. The pipe exists on-chain or is already tracked locally.
-2. The token matches the server-configured token for this Stackmail instance.
+2. The token matches the server-configured token for this Mailslot instance.
 3. The actor is the sender and is part of the pipe.
 4. The recipient side of the proof is the reservoir.
 5. The proof signature is valid for the actor.
@@ -121,7 +121,7 @@ These must hold for every created recipient pending payment:
 
 ### Why pending counts
 
-Using only settled balances makes mailbox onboarding and recent top-ups look broken for several blocks. For Stackmail-sized value, that is not worth the UX cost.
+Using only settled balances makes mailbox onboarding and recent top-ups look broken for several blocks. For Mailslot-sized value, that is not worth the UX cost.
 
 ### Policy
 

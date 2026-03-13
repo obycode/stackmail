@@ -120,10 +120,10 @@ function extractDecryptedMessage(resp: unknown): string | null {
   );
 }
 
-function extractDecryptedStackmailMessage(resp: unknown): Partial<DecryptedMailPayload> | null {
+function extractDecryptedMailslotMessage(resp: unknown): Partial<DecryptedMailPayload> | null {
   return (
-    (resp as { result?: { stackmailMessage?: Partial<DecryptedMailPayload> } })?.result?.stackmailMessage
-    ?? (resp as { stackmailMessage?: Partial<DecryptedMailPayload> })?.stackmailMessage
+    (resp as { result?: { mailslotMessage?: Partial<DecryptedMailPayload> } })?.result?.mailslotMessage
+    ?? (resp as { mailslotMessage?: Partial<DecryptedMailPayload> })?.mailslotMessage
     ?? null
   );
 }
@@ -525,7 +525,7 @@ async function decryptMail(payload: EncryptedMail, privateKeyHex: string): Promi
   const plaintext = cbc(encryptionKey, iv).decrypt(cipherText);
   const parsed = JSON.parse(new TextDecoder().decode(plaintext)) as DecryptedMailPayload;
   if (!parsed || parsed.v !== 1 || typeof parsed.secret !== 'string' || typeof parsed.body !== 'string') {
-    throw new Error('Decrypted payload is not valid Stackmail mail');
+    throw new Error('Decrypted payload is not valid Mailslot mail');
   }
   return parsed;
 }
@@ -568,7 +568,7 @@ interface RuntimeSettingsPayload {
   deferredMessageTtlMs: number;
   maxBorrowPerTap: string;
 }
-const DECRYPT_KEY_STORAGE_KEY = 'stackmail.inboxDecryptPrivateKey';
+const DECRYPT_KEY_STORAGE_KEY = 'mailslot.inboxDecryptPrivateKey';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App state machine
@@ -632,18 +632,18 @@ function updateDecryptCliHelp(): void {
   commandsEl.textContent = [
     'Install:',
     'curl -fsSL https://raw.githubusercontent.com/warmidris/stackmail/main/scripts/install-cli.sh | sh',
-    'export STACKMAIL_PRIVATE_KEY=<your-private-key>',
+    'export MAILSLOT_PRIVATE_KEY=<your-private-key>',
     '',
     'Open your inbox:',
-    `STACKMAIL_SERVER_URL=${serverUrl} stackmail inbox`,
+    `MAILSLOT_SERVER_URL=${serverUrl} mailslot inbox`,
     '',
     'Read a specific message:',
-    `STACKMAIL_SERVER_URL=${serverUrl} stackmail read <message-id>`,
+    `MAILSLOT_SERVER_URL=${serverUrl} mailslot read <message-id>`,
   ].join('\n');
 }
 
 function cliReadCommand(messageId: string): string {
-  return `STACKMAIL_SERVER_URL=${window.location.origin} stackmail read ${messageId}`;
+  return `MAILSLOT_SERVER_URL=${window.location.origin} mailslot read ${messageId}`;
 }
 
 function updateDecryptKeyUI(): void {
@@ -931,12 +931,12 @@ async function buildWalletAuthHeader(action: string, messageId?: string): Promis
 
   const ts         = Date.now();
   const chainId    = (serverStatus.chainId as number | undefined)    ?? CHAIN_ID;
-  const authDomain = (serverStatus.authDomain as string | undefined) ?? 'Stackmail';
+  const authDomain = (serverStatus.authDomain as string | undefined) ?? 'Mailslot';
   const sfVersion  = (serverStatus.sfVersion as string | undefined)  ?? '0.6.0';
   const audience   = (serverStatus.authAudience as string | undefined)
     ?? (serverStatus.reservoirContract as string | undefined)
     ?? (serverStatus.serverAddress as string | undefined)
-    ?? 'Stackmail';
+    ?? 'Mailslot';
 
   const msgFields: Record<string, { type: string; value: string }> = {
     action:    { type: 'string-ascii', value: action },
@@ -1386,7 +1386,7 @@ async function addFundsToTap(): Promise<void> {
           network: chainIdToNetworkName(chainId),
           postConditionMode: PostConditionMode.Deny,
           postConditions,
-          appDetails: { name: 'Stackmail', icon: window.location.origin + '/favicon.ico' },
+          appDetails: { name: 'Mailslot', icon: window.location.origin + '/favicon.ico' },
           onFinish: (data: { txId?: string; txid?: string; tx_id?: string }) =>
             resolve(data.txId ?? data.txid ?? data.tx_id ?? ''),
           onCancel: () => reject(new Error('Transaction cancelled')),
@@ -1514,7 +1514,7 @@ async function borrowMoreLiquidity(): Promise<void> {
           network: chainIdToNetworkName(chainId),
           postConditionMode: PostConditionMode.Deny,
           postConditions,
-          appDetails: { name: 'Stackmail', icon: window.location.origin + '/favicon.ico' },
+          appDetails: { name: 'Mailslot', icon: window.location.origin + '/favicon.ico' },
           onFinish: (data: { txId?: string; txid?: string; tx_id?: string }) =>
             resolve(data.txId ?? data.txid ?? data.tx_id ?? ''),
           onCancel: () => reject(new Error('Transaction cancelled')),
@@ -1730,7 +1730,7 @@ async function openMailbox(): Promise<void> {
           network:         chainIdToNetworkName(chainId),
           postConditionMode: PostConditionMode.Deny,
           postConditions,
-          appDetails: { name: 'Stackmail', icon: window.location.origin + '/favicon.ico' },
+          appDetails: { name: 'Mailslot', icon: window.location.origin + '/favicon.ico' },
           onFinish:  (data: { txId?: string; txid?: string; tx_id?: string }) =>
             resolve(data.txId ?? data.txid ?? data.tx_id ?? ''),
           onCancel:  () => reject(new Error('Transaction cancelled')),
@@ -1803,8 +1803,8 @@ async function apiFetch(path: string, opts: RequestInit = {}): Promise<Response>
 }
 
 function captureInboxSession(response: Response): void {
-  const token = response.headers.get('x-stackmail-session');
-  const expiresAtRaw = response.headers.get('x-stackmail-session-expires-at');
+  const token = response.headers.get('x-mailslot-session');
+  const expiresAtRaw = response.headers.get('x-mailslot-session-expires-at');
   const expiresAt = expiresAtRaw ? Number(expiresAtRaw) : 0;
   if (token && Number.isFinite(expiresAt) && expiresAt > Date.now()) {
     inboxSessionToken = token;
@@ -1818,9 +1818,9 @@ async function buildInboxRequestHeaders(
   extraHeaders: Record<string, string> = {},
 ): Promise<Record<string, string>> {
   if (inboxSessionToken && Date.now() < inboxSessionExpiresAt) {
-    return { ...extraHeaders, 'x-stackmail-session': inboxSessionToken };
+    return { ...extraHeaders, 'x-mailslot-session': inboxSessionToken };
   }
-  return { ...extraHeaders, 'x-stackmail-auth': await buildWalletAuthHeader(action, messageId) };
+  return { ...extraHeaders, 'x-mailslot-auth': await buildWalletAuthHeader(action, messageId) };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1925,7 +1925,7 @@ function requireInboxDecryptKey(): string {
 function parseWalletDecryptedMail(message: string): DecryptedMailPayload {
   const parsed = JSON.parse(message) as Partial<DecryptedMailPayload>;
   if (!parsed || parsed.v !== 1 || typeof parsed.secret !== 'string' || typeof parsed.body !== 'string') {
-    throw new Error('Wallet returned an invalid Stackmail payload');
+    throw new Error('Wallet returned an invalid Mailslot payload');
   }
   return parsed as DecryptedMailPayload;
 }
@@ -1946,7 +1946,7 @@ async function decryptMailWithWallet(payload: EncryptedMail): Promise<DecryptedM
   const provider = getLeatherProvider();
   if (!provider) throw new Error('Leather provider not available');
   const resp = await provider.request('stx_decryptMessage', { encryptedMessage: payload });
-  const parsed = extractDecryptedStackmailMessage(resp);
+  const parsed = extractDecryptedMailslotMessage(resp);
   if (parsed && parsed.v === 1 && typeof parsed.secret === 'string' && typeof parsed.body === 'string') {
     return parsed as DecryptedMailPayload;
   }
@@ -2205,7 +2205,7 @@ async function fetchRecipientInfo(toAddr: string): Promise<void> {
     const serverPaymentInfo = await fetchRecipientPaymentInfo(toAddr);
     if (serverPaymentInfo) {
       recipientInfo = serverPaymentInfo;
-      el.innerHTML  = `<span style="color:var(--green)">✓ Recipient is registered with this Stackmail server</span>`;
+      el.innerHTML  = `<span style="color:var(--green)">✓ Recipient is registered with this Mailslot server</span>`;
     } else {
       const recipientPublicKey = await lookupRecipientPubkey(toAddr);
       if (!recipientPublicKey) {
@@ -2341,7 +2341,7 @@ async function sendMessage(): Promise<void> {
       method:  'POST',
       headers: {
         'content-type':        'application/json',
-        'x-stackmail-payment': btoa(JSON.stringify(proof)),
+        'x-mailslot-payment': btoa(JSON.stringify(proof)),
       },
       body: JSON.stringify({ from: senderAddr, fromPublicKey: walletPubkey, encryptedPayload }),
     });
@@ -2424,7 +2424,7 @@ async function loadStatus(): Promise<void> {
     updateDecryptKeyUI();
     populateAdminSettingsForm(extractRuntimeSettings(data));
     dot.className    = data.ok ? 'dot green' : 'dot red';
-    label.textContent = data.ok ? 'Stackmail Server — Online' : 'Server returned error';
+    label.textContent = data.ok ? 'Mailslot Server — Online' : 'Server returned error';
     (document.getElementById('s-addr') as HTMLElement).textContent     = String(data.serverAddress || '—');
     (document.getElementById('s-contract') as HTMLElement).textContent = String(data.sfContract    || '—');
     (document.getElementById('s-price') as HTMLElement).textContent    = data.messagePriceSats
@@ -2555,7 +2555,7 @@ async function setBorrowRate(): Promise<void> {
           functionArgs: [uintCV(rate)],
           network: chainIdToNetworkName(chainId),
           postConditionMode: PostConditionMode.Allow,
-          appDetails: { name: 'Stackmail', icon: window.location.origin + '/favicon.ico' },
+          appDetails: { name: 'Mailslot', icon: window.location.origin + '/favicon.ico' },
           onFinish: (data: { txId?: string; txid?: string; tx_id?: string }) =>
             resolve(data.txId ?? data.txid ?? data.tx_id ?? ''),
           onCancel: () => reject(new Error('Transaction cancelled')),
@@ -2621,7 +2621,7 @@ async function setReservoirAgent(): Promise<void> {
           functionArgs: [principalCV(sfContract), principalCV(agent)],
           network: chainIdToNetworkName(chainId),
           postConditionMode: PostConditionMode.Allow,
-          appDetails: { name: 'Stackmail', icon: window.location.origin + '/favicon.ico' },
+          appDetails: { name: 'Mailslot', icon: window.location.origin + '/favicon.ico' },
           onFinish: (data: { txId?: string; txid?: string; tx_id?: string }) =>
             resolve(data.txId ?? data.txid ?? data.tx_id ?? ''),
           onCancel: () => reject(new Error('Transaction cancelled')),
@@ -2701,7 +2701,7 @@ async function saveAdminRuntimeSettings(): Promise<void> {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-stackmail-auth': await buildWalletAuthHeader('admin-settings'),
+        'x-mailslot-auth': await buildWalletAuthHeader('admin-settings'),
       },
       body: JSON.stringify(payload),
     });
@@ -2723,7 +2723,7 @@ async function saveAdminRuntimeSettings(): Promise<void> {
     statusEl.innerHTML = `<div class="alert alert-error">${escHtml(message)}</div>`;
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Save Stackmail Settings';
+    btn.textContent = 'Save Mailslot Settings';
   }
 }
 

@@ -1,4 +1,4 @@
-import type { EncryptedMail, MailPayload } from '@stackmail/crypto';
+import type { EncryptedMail, MailPayload } from '@mailslot/crypto';
 export type { EncryptedMail, MailPayload };
 
 export interface InboxEntry {
@@ -97,7 +97,7 @@ export interface SendOptions {
    *   GET https://api.mainnet.hiro.so/extended/v1/address/{addr}/transactions?limit=1
    *   → results[0].sender_public_key
    *
-   * Future: BNSv2 zonefiles could carry a dedicated Stackmail encryption key,
+   * Future: BNSv2 zonefiles could carry a dedicated Mailslot encryption key,
    * allowing recipients to publish a key without needing prior transaction history.
    */
   recipientPublicKey: string;
@@ -139,7 +139,7 @@ export interface ClientConfig {
   address: string;
   /** Agent's compressed secp256k1 public key (33 bytes hex) */
   publicKey: string;
-  /** Default stackmail server base URL */
+  /** Default mailslot server base URL */
   serverUrl: string;
   /**
    * Optional Stacks chain ID used for strict SIP-018 verification.

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Create a consistent SQLite backup of the live Stackmail DB.
+Create a consistent SQLite backup of the live Mailslot DB.
 
 Usage:
-  python3 scripts/backup_db.py /data/stackmail.db /backups/stackmail-YYYYMMDD-HHMMSS.db
+  python3 scripts/backup_db.py /data/mailslot.db /backups/mailslot-YYYYMMDD-HHMMSS.db
 """
 
 from __future__ import annotations
