@@ -1101,6 +1101,46 @@ export async function previewMessage(
 }
 
 /**
+ * Fetch an already-claimed message and decrypt it locally.
+ *
+ * @param messageId   Message ID to fetch
+ * @param privkeyHex  Your private key (used for auth and decryption)
+ * @param serverUrl   Mailbox server URL
+ */
+export async function getClaimedMessage(
+  messageId: string,
+  privkeyHex: string,
+  serverUrl: string = DEFAULTS.SERVER_URL,
+): Promise<DecryptedMessage> {
+  const kp = keypairFromPrivkey(privkeyHex);
+  const status = await getServerStatus(serverUrl);
+  const auth = buildAuthHeader(kp.privHex, kp.pubHex, kp.addr, 'get-message', resolveAuthAudience(status), messageId);
+  const r = await http('GET', `${serverUrl}/inbox/${messageId}`, undefined, { 'x-stackmail-auth': auth });
+  if (!r.ok) throw new Error(`getClaimedMessage failed: ${r.status} ${JSON.stringify(r.data)}`);
+
+  const payload = r.data as {
+    message: {
+      id: string;
+      from: string;
+      sentAt: number;
+      amount: string;
+      encryptedPayload: EncryptedMail;
+    };
+  };
+  const message = payload.message;
+  const decrypted = await decryptMail(message.encryptedPayload, kp.privHex);
+  return {
+    id: message.id,
+    from: message.from,
+    sentAt: message.sentAt,
+    amount: message.amount,
+    subject: decrypted.subject,
+    body: decrypted.body,
+    secret: decrypted.secret,
+  };
+}
+
+/**
  * Claim a message by revealing the HTLC preimage.
  *
  * This decrypts the message payload (getting the secret), verifies the HTLC

@@ -12,6 +12,7 @@ const stackmail = stackmailModule.default ?? stackmailModule;
 
 const {
   claimMessage,
+  getClaimedMessage,
   getInbox,
   getServerStatus,
   getTapState,
@@ -327,7 +328,11 @@ async function printStatus(ctx) {
 }
 
 async function readOne(ctx, messageId, asJson = false) {
-  const message = await claimMessage(messageId, ctx.privateKey, ctx.serverUrl);
+  const inbox = await getInbox(ctx.privateKey, ctx.serverUrl, true);
+  const entry = inbox.find(message => message.id === messageId);
+  const message = entry?.claimed
+    ? await getClaimedMessage(messageId, ctx.privateKey, ctx.serverUrl)
+    : await claimMessage(messageId, ctx.privateKey, ctx.serverUrl);
   if (asJson) {
     console.log(JSON.stringify(message, null, 2));
     return message;
@@ -385,7 +390,9 @@ async function runInbox(ctx, options) {
       continue;
     }
 
-    const opened = await claimMessage(selection.message.id, ctx.privateKey, ctx.serverUrl);
+    const opened = selection.message.claimed
+      ? await getClaimedMessage(selection.message.id, ctx.privateKey, ctx.serverUrl)
+      : await claimMessage(selection.message.id, ctx.privateKey, ctx.serverUrl);
     const action = await renderMessageView(ctx, selection.message, opened);
     if (action === 'reply') {
       const sent = await composeFlow(ctx, {
