@@ -219,6 +219,7 @@ function withRawMode(fn) {
   return fn().finally(() => {
     if (stdin.isTTY) stdin.setRawMode(false);
     stdin.removeAllListeners('data');
+    stdin.pause();
   });
 }
 
