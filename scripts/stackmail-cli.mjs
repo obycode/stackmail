@@ -4,7 +4,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import readline from 'node:readline';
 import readlinePromises from 'node:readline/promises';
 
 const stackmailModule = await import('./stackmail-client.ts');
@@ -122,12 +121,6 @@ function clearScreen() {
   process.stdout.write('\x1Bc');
 }
 
-function keyMatches(key, ch, expected) {
-  const name = typeof key?.name === 'string' ? key.name.toLowerCase() : '';
-  const sequence = typeof ch === 'string' ? ch.toLowerCase() : '';
-  return name === expected || sequence === expected;
-}
-
 async function prompt(question, initial = '') {
   const rl = readlinePromises.createInterface({ input: process.stdin, output: process.stdout });
   try {
@@ -221,11 +214,11 @@ function renderInboxScreen(ctx, messages, selected, includeClaimed) {
 
 function withRawMode(fn) {
   const stdin = process.stdin;
-  readline.emitKeypressEvents(stdin);
   if (stdin.isTTY) stdin.setRawMode(true);
+  stdin.resume();
   return fn().finally(() => {
     if (stdin.isTTY) stdin.setRawMode(false);
-    stdin.removeAllListeners('keypress');
+    stdin.removeAllListeners('data');
   });
 }
 
@@ -234,49 +227,51 @@ async function selectInboxMessage(ctx, messages, includeClaimed) {
   let selected = 0;
   renderInboxScreen(ctx, messages, selected, includeClaimed);
   return withRawMode(() => new Promise((resolve) => {
-    const onKeypress = async (ch, key) => {
-      if (key.name === 'up') {
+    const onData = async chunk => {
+      const input = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+      const lower = input.toLowerCase();
+      if (input === '\u001b[A') {
         selected = selected > 0 ? selected - 1 : Math.max(0, messages.length - 1);
         renderInboxScreen(ctx, messages, selected, includeClaimed);
         return;
       }
-      if (key.name === 'down') {
+      if (input === '\u001b[B') {
         selected = messages.length === 0 ? 0 : (selected + 1) % messages.length;
         renderInboxScreen(ctx, messages, selected, includeClaimed);
         return;
       }
-      if (key.name === 'return') {
+      if (input === '\r' || input === '\n') {
         cleanup();
         resolve({ action: 'open', message: messages[selected] ?? null });
         return;
       }
-      if (keyMatches(key, ch, 'r')) {
+      if (lower === 'r') {
         cleanup();
         resolve({ action: 'reply', message: messages[selected] ?? null });
         return;
       }
-      if (keyMatches(key, ch, 'c')) {
+      if (lower === 'c') {
         cleanup();
         resolve({ action: 'compose', message: null });
         return;
       }
-      if (keyMatches(key, ch, 'a')) {
+      if (lower === 'a') {
         cleanup();
         resolve({ action: 'toggle-claimed', message: null });
         return;
       }
-      if (keyMatches(key, ch, 'j')) {
+      if (lower === 'j') {
         cleanup();
         resolve({ action: 'refresh', message: null });
         return;
       }
-      if (keyMatches(key, ch, 'q') || (key.ctrl && key.name === 'c')) {
+      if (lower === 'q' || input === '\u0003') {
         cleanup();
         resolve({ action: 'quit', message: null });
       }
     };
-    const cleanup = () => process.stdin.removeListener('keypress', onKeypress);
-    process.stdin.on('keypress', onKeypress);
+    const cleanup = () => process.stdin.removeListener('data', onData);
+    process.stdin.on('data', onData);
   }));
 }
 
@@ -293,19 +288,21 @@ async function renderMessageView(ctx, inboxEntry, message) {
 
   if (!process.stdin.isTTY || !process.stdout.isTTY) return 'back';
   return withRawMode(() => new Promise((resolve) => {
-    const onKeypress = (ch, key) => {
-      if (keyMatches(key, ch, 'r')) {
+    const onData = chunk => {
+      const input = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+      const lower = input.toLowerCase();
+      if (lower === 'r') {
         cleanup();
         resolve('reply');
         return;
       }
-      if (keyMatches(key, ch, 'b') || key.name === 'escape' || keyMatches(key, ch, 'q') || key.name === 'return' || (key.ctrl && key.name === 'c')) {
+      if (lower === 'b' || input === '\u001b' || lower === 'q' || input === '\r' || input === '\n' || input === '\u0003') {
         cleanup();
         resolve('back');
       }
     };
-    const cleanup = () => process.stdin.removeListener('keypress', onKeypress);
-    process.stdin.on('keypress', onKeypress);
+    const cleanup = () => process.stdin.removeListener('data', onData);
+    process.stdin.on('data', onData);
   }));
 }
 
