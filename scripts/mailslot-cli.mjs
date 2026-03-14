@@ -133,6 +133,89 @@ function formatAmount(amount, token) {
   return `${amount} ${token ?? 'units'}`;
 }
 
+function formatMessages(amount, price) {
+  const unitPrice = BigInt(price ?? 1n);
+  if (unitPrice <= 0n) return '0';
+  return (BigInt(amount) / unitPrice).toString();
+}
+
+function printKv(label, value) {
+  console.log(`${label.padEnd(22)} ${value}`);
+}
+
+async function confirmAction(promptText) {
+  const rl = readlinePromises.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (await rl.question(`${promptText} [y/N]: `)).trim().toLowerCase();
+    return answer === 'y' || answer === 'yes';
+  } finally {
+    rl.close();
+  }
+}
+
+async function printSendSignaturePreview(ctx, to, subject, body) {
+  const status = ctx.status;
+  const tap = ctx.tap ?? await getTapState(ctx.privateKey, ctx.serverUrl);
+  if (!tap) throw new Error('No tap found for this sender. Open and fund a mailbox tap before sending.');
+  const payInfo = await mailslot.getPaymentInfo(to, ctx.serverUrl);
+  const price = BigInt(payInfo.amount);
+  const fee = BigInt(status.minFeeSats ?? '0');
+  const recipientAmount = price > fee ? price - fee : 0n;
+  const beforeMyBalance = tap.pipeState.myBalance;
+  const beforeServerBalance = tap.pipeState.serverBalance;
+  const afterMyBalance = beforeMyBalance - price;
+  const afterServerBalance = beforeServerBalance + price;
+  const nextNonce = tap.pipeState.nonce + 1n;
+  const token = status.supportedToken ?? 'token';
+
+  console.log('\nAbout to request a payment signature for this message:');
+  printKv('Recipient', to);
+  printKv('Subject', subject || '(no subject)');
+  printKv('Body length', `${body.length} chars`);
+  printKv('Message price', formatAmount(price.toString(), token));
+  printKv('Recipient gets', formatAmount(recipientAmount.toString(), token));
+  printKv('Server fee', formatAmount(fee.toString(), token));
+  printKv('Your balance', `${formatAmount(beforeMyBalance.toString(), token)} -> ${formatAmount(afterMyBalance.toString(), token)}`);
+  printKv('Server balance', `${formatAmount(beforeServerBalance.toString(), token)} -> ${formatAmount(afterServerBalance.toString(), token)}`);
+  printKv('Nonce', `${tap.pipeState.nonce.toString()} -> ${nextNonce.toString()}`);
+  console.log('');
+}
+
+function printRefreshSignaturePreview(ctx, capacity) {
+  const token = ctx.status.supportedToken ?? 'token';
+  const beforeMyBalance = ctx.tap.pipeState.myBalance;
+  const beforeReservoirBalance = ctx.tap.pipeState.serverBalance;
+  const afterReservoirBalance = beforeReservoirBalance + capacity.refreshAmount;
+  const nonceBefore = ctx.tap.pipeState.nonce;
+  const nonceAfter = nonceBefore + 1n;
+
+  console.log('\nAbout to request a refresh-capacity signature:');
+  printKv('Refresh amount', formatAmount(capacity.refreshAmount.toString(), token));
+  printKv('Your balance', formatAmount(beforeMyBalance.toString(), token));
+  printKv('Receive capacity', `${formatAmount(beforeReservoirBalance.toString(), token)} -> ${formatAmount(afterReservoirBalance.toString(), token)}`);
+  printKv('Messages receivable', `${formatMessages(beforeReservoirBalance, capacity.messagePrice)} -> ${formatMessages(afterReservoirBalance, capacity.messagePrice)}`);
+  printKv('Nonce', `${nonceBefore.toString()} -> ${nonceAfter.toString()}`);
+  console.log('');
+}
+
+async function confirmRefreshTransaction(ctx, capacity, action) {
+  const token = ctx.status.supportedToken ?? 'token';
+  const fee = BigInt(action.fee ?? '0');
+  const amount = BigInt(action.amount);
+  const reservoir = action.reservoirContract;
+  const tokenLabel = action.token ?? 'STX';
+  console.log('Transaction approval required:');
+  printKv('Contract', `${action.reservoirContract}::borrow-liquidity`);
+  printKv('You pay', formatAmount(fee.toString(), token));
+  printKv('Reservoir sends', formatAmount(amount.toString(), token));
+  printKv('Post conditions', action.token == null
+    ? `you send exactly ${fee} STX; reservoir sends exactly ${amount} STX`
+    : `you send exactly ${fee} ${tokenLabel}; ${reservoir} sends exactly ${amount} ${tokenLabel}`);
+  printKv('Resulting target', `${formatAmount(capacity.receiveCapacityTarget.toString(), token)} (${formatMessages(capacity.receiveCapacityTarget, capacity.messagePrice)} messages)`);
+  console.log('');
+  return confirmAction('Submit this transaction?');
+}
+
 function getReceiveCapacitySummary(status, tap) {
   const policy = deriveMailboxCapacityPolicy(status);
   const receiveLiquidity = tap?.pipeState.serverBalance ?? 0n;
@@ -205,6 +288,11 @@ async function composeFlow(ctx, defaults = {}) {
   const subject = interactive ? await prompt('Subject', defaults.subject ?? '') : (defaults.subject ?? '').trim();
   const body = interactive ? await promptBody(defaults.body ?? '') : String(defaults.body ?? '').trim();
   if (!body) throw new Error('Message body is required');
+  if (interactive) {
+    await printSendSignaturePreview(ctx, to, subject, body);
+    const approved = await confirmAction('Request wallet signature for this message?');
+    if (!approved) throw new Error('Message signing cancelled');
+  }
   const result = await sendMessage({
     to,
     subject,
@@ -421,9 +509,18 @@ async function refreshCapacity(ctx, options) {
     return payload;
   }
 
+  if (!options.json && process.stdin.isTTY && process.stdout.isTTY) {
+    printRefreshSignaturePreview(ctx, capacity);
+    const approved = await confirmAction('Request wallet signature for this refresh?');
+    if (!approved) throw new Error('Refresh signing cancelled');
+  }
   const action = await prepareBorrowMoreLiquidity(ctx.privateKey, amount, ctx.serverUrl);
   const [contractAddress, contractName] = action.reservoirContract.split('.');
   const network = createNetwork({ network: action.chainId === 1 ? 'mainnet' : 'testnet' });
+  if (!options.json && process.stdin.isTTY && process.stdout.isTTY) {
+    const approved = await confirmRefreshTransaction(ctx, capacity, action);
+    if (!approved) throw new Error('Refresh transaction cancelled');
+  }
   const tx = await makeContractCall({
     network,
     senderKey: ctx.privateKey,
