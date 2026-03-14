@@ -249,6 +249,7 @@ const serverConfig: Config = {
   deferredMessageTtlMs: 86_400_000,
   maxBorrowPerTap: '100000',
   receiveCapacityMultiplier: 20,
+  refreshCapacityCooldownMs: 86_400_000,
   inboxSessionTtlMs: 300_000,
   allowedOrigins: [],
   rateLimitWindowMs: 60_000,

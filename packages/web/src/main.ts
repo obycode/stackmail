@@ -357,6 +357,7 @@ function extractRuntimeSettings(status: Record<string, unknown>): RuntimeSetting
     deferredMessageTtlMs: Number(value.deferredMessageTtlMs),
     maxBorrowPerTap: String(value.maxBorrowPerTap),
     receiveCapacityMultiplier: value.receiveCapacityMultiplier != null ? Number(value.receiveCapacityMultiplier) : 20,
+    refreshCapacityCooldownMs: value.refreshCapacityCooldownMs != null ? Number(value.refreshCapacityCooldownMs) : 86400000,
   };
 }
 
@@ -372,6 +373,7 @@ function populateAdminSettingsForm(settings: RuntimeSettingsPayload | null): voi
   (document.getElementById('admin-deferred-ttl-input') as HTMLInputElement | null)!.value = String(settings.deferredMessageTtlMs);
   (document.getElementById('admin-max-borrow-per-tap-input') as HTMLInputElement | null)!.value = settings.maxBorrowPerTap;
   (document.getElementById('admin-receive-capacity-multiplier-input') as HTMLInputElement | null)!.value = String(settings.receiveCapacityMultiplier);
+  (document.getElementById('admin-refresh-capacity-cooldown-input') as HTMLInputElement | null)!.value = String(settings.refreshCapacityCooldownMs);
 }
 
 function hasSupportedTokenResolved(): boolean {
@@ -716,6 +718,7 @@ interface RuntimeSettingsPayload {
   deferredMessageTtlMs: number;
   maxBorrowPerTap: string;
   receiveCapacityMultiplier: number;
+  refreshCapacityCooldownMs: number;
 }
 const DECRYPT_KEY_STORAGE_KEY = 'mailslot.inboxDecryptPrivateKey';
 
@@ -1053,7 +1056,7 @@ function updateWalletUI(): void {
 
 async function onWalletConnected(): Promise<void> {
   setAppState('checking');
-  (document.getElementById('checking-label') as HTMLElement).textContent = 'Checking payment channel…';
+  (document.getElementById('checking-label') as HTMLElement).textContent = 'Checking payment pipe…';
 
   try {
     await withTimeout(ensureServerStatusLoaded(), 15_000, 'Server status timeout');
@@ -1953,7 +1956,7 @@ async function checkTapAfterTx(): Promise<void> {
   } else {
     btn.disabled = false;
     btn.textContent = 'Check Again';
-    statusEl.innerHTML = '<div class="alert alert-warning">Channel not found yet — the transaction may still be confirming. Try again in a moment.</div>';
+    statusEl.innerHTML = '<div class="alert alert-warning">Pipe not found yet — the transaction may still be confirming. Try again in a moment.</div>';
   }
 }
 
@@ -2407,7 +2410,7 @@ async function fetchRecipientInfo(toAddr: string): Promise<void> {
       (document.getElementById('send-btn') as HTMLButtonElement).disabled = pipeState.myBalance < BigInt(String(recipientInfo.amount));
     } else {
       (document.getElementById('tap-status') as HTMLElement).innerHTML =
-        `<span style="color:var(--red)">✗ No channel found on-chain</span>`;
+        `<span style="color:var(--red)">✗ No pipe found on-chain</span>`;
       (document.getElementById('send-btn') as HTMLButtonElement).disabled = true;
     }
 
@@ -2458,7 +2461,7 @@ async function sendMessage(): Promise<void> {
     // Update pipe state
     const price            = BigInt(recipientInfo.amount || '1000');
     if (pipeState.myBalance < price) {
-      throw new Error(`Insufficient channel balance. Need ${formatPaymentAmount(price)}, have ${formatPaymentAmount(pipeState.myBalance)}.`);
+      throw new Error(`Insufficient pipe balance. Need ${formatPaymentAmount(price)}, have ${formatPaymentAmount(pipeState.myBalance)}.`);
     }
     const newServerBalance = pipeState.serverBalance + price;
     const newMyBalance     = pipeState.myBalance - price;
@@ -2884,6 +2887,7 @@ async function saveAdminRuntimeSettings(): Promise<void> {
       deferredMessageTtlMs: readInt('admin-deferred-ttl-input', 'Deferred TTL'),
       maxBorrowPerTap: readUintString('admin-max-borrow-per-tap-input', 'Max Borrow / Tap'),
       receiveCapacityMultiplier: readInt('admin-receive-capacity-multiplier-input', 'Receive Capacity Multiplier'),
+      refreshCapacityCooldownMs: readInt('admin-refresh-capacity-cooldown-input', 'Refresh Capacity Cooldown'),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

@@ -334,6 +334,7 @@ export function createMailServer(
     if (parsed['deferredMessageTtlMs'] != null) patch.deferredMessageTtlMs = Number(parsed['deferredMessageTtlMs']);
     if (parsed['maxBorrowPerTap'] != null) patch.maxBorrowPerTap = String(parsed['maxBorrowPerTap']);
     if (parsed['receiveCapacityMultiplier'] != null) patch.receiveCapacityMultiplier = Number(parsed['receiveCapacityMultiplier']);
+    if (parsed['refreshCapacityCooldownMs'] != null) patch.refreshCapacityCooldownMs = Number(parsed['refreshCapacityCooldownMs']);
 
     try {
       const next = settingsStore.update(patch);
